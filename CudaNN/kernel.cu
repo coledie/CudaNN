@@ -1,3 +1,6 @@
+/*
+Deep neural network accelerated with CUDA.
+*/
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
@@ -16,16 +19,10 @@ typedef unsigned char uchar;
 
 /*
 TODO
-- Iterative backpropogation
-
-- use & for variables?
-- Readme
-- make sure the .user not commited and no inofo in the vcxproj(?)
-
-- Memory leaks C++ and CUDA
-- Template everything
 - Better use of CUDA
+- Template everything
 - Make object oriented
+- Memory leaks C++ and CUDA
 */
 
 template <typename T>
@@ -72,6 +69,87 @@ __global__ void dsigmoid(double *output, const double *input){
 	int i = threadIdx.x;
 
 	output[i] = 1.0 - pow(input[i], 2);
+}
+
+double *matmul(const double *x, double **mat, const unsigned int maty, const unsigned int matx) {
+	/*
+	Matrix multiplication
+
+	Parameters
+	----------
+	x: double[n]
+	mat: double[m, n]
+	maty: int = m
+	matx: int = n
+
+	Returns
+	-------
+	double[m] Output of matrix multiplication.
+	*/
+	double *output = new double[matx];
+
+	for (unsigned int i = 0; i < matx; i++) {
+		double temp = 0;
+
+		for (unsigned int j = 0; j < maty; j++) {
+			temp += x[j] * mat[j][i];
+		}
+
+		output[i] = temp;
+	}
+
+	return output;
+}
+
+double cross_entropy_loss(double *real, const double target, const unsigned int n_outputs) {
+	/*
+	Cross entropy loss function.
+
+	Parameters
+	----------
+	real: double[n]
+		Approximate label.
+	target: double[n]
+		Expected label.
+	n_outputs: uint = n
+		Number of values in arrays.
+
+	Returns
+	-------
+	Cross entropy loss.
+	*/
+	double total = 0;
+	for (unsigned int j = 0; j < n_outputs; j++) {
+		total += exp(real[j]);
+	}
+
+	return -real[(int)target] + log(total);
+}
+
+double *dcross_entropy_loss(const double *real, const double *target, const unsigned int n_outputs) {
+	/*
+	Derivative of cross entropy loss function.
+
+	Parameters
+	----------
+	real: double[n]
+		Approximate label.
+	target: double[n]
+		Expected label.
+	n_outputs: uint = n
+		Number of values in arrays.
+
+	Returns
+	-------
+	Derivative of cross entropy loss.
+	*/
+
+	double *output = new double[n_outputs];
+
+	for (unsigned int i = 0; i < n_outputs; i++)
+		output[i] = (real[i] - target[i]) / n_outputs;
+
+	return output;
 }
 
 double* onehot(double target, int N_CLASS) {
@@ -131,36 +209,6 @@ int amax(double *real, const unsigned int n_values) {
 	return m_idx;
 }
 
-double *matmul(const double *x, double **mat, const unsigned int maty, const unsigned int matx){
-	/*
-	Matrix multiplication
-
-	Parameters
-	----------
-	x: double[n]
-	mat: double[m, n]
-	maty: int = m
-	matx: int = n
-
-	Returns
-	-------
-	double[m] Output of matrix multiplication.
-	*/
-	double *output = new double[matx];
-
-	for (unsigned int i = 0; i < matx; i++) {
-		double temp = 0;
-
-		for (unsigned int j = 0; j < maty; j++) {
-			temp += x[j] * mat[j][i];
-		}
-
-		output[i] = temp;
-	}
-
-	return output;
-}
-
 double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int n_layers){
 	/*
 	Forward propogate input through network.
@@ -192,57 +240,6 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 	}
 
 	return fires;
-}
-
-double cross_entropy_loss(double *real, const double target, const unsigned int n_outputs){
-	/*
-	Cross entropy loss function.
-
-	Parameters
-	----------
-	real: double[n]
-		Approximate label.
-	target: double[n]
-		Expected label.
-	n_outputs: uint = n
-		Number of values in arrays.
-
-	Returns
-	-------
-	Cross entropy loss.
-	*/
-	double total = 0;
-	for (unsigned int j = 0; j < n_outputs; j++){
-		total += exp(real[j]);
-	}
-
-	return -real[(int) target] + log(total);
-}
-
-double *dcross_entropy_loss(const double *real, const double *target, const unsigned int n_outputs){
-	/*
-	Derivative of cross entropy loss function.
-
-	Parameters
-	----------
-	real: double[n]
-		Approximate label.
-	target: double[n]
-		Expected label.
-	n_outputs: uint = n
-		Number of values in arrays.
-
-	Returns
-	-------
-	Derivative of cross entropy loss.
-	*/
-
-	double *output = new double[n_outputs];
-
-	for (unsigned int i = 0; i < n_outputs; i++)
-		output[i] = (real[i] - target[i]) / n_outputs;
-
-	return output;
 }
 
 void backward(double ***w, const double *target, double **fires, const unsigned int *layers, const unsigned int n_layers, double learning_rate) {
@@ -285,41 +282,36 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	deltas[n_layers - 2] = delta;
 
 	//// make iterative
-	double *error2 = new double[layers[n_layers - 2]]; // np.sum(deltas[n_layers - 2] * self.w[i + 1], axis = 1)  //// TODO TODO TODO
-	for (int i = 0; i < layers[n_layers - 2]; i++)
-	{
-		error2[i] = 0;
+	for (int k = n_layers - 3; k > -1; k--) {
+		int kk = n_layers - 3 - k;
+		double *error2 = new double[layers[n_layers - 2 - kk]];
+		for (int i = 0; i < layers[n_layers - 2 - kk]; i++)
+		{
+			error2[i] = 0;
 
-	for (int j = 0; j < layers[n_layers - 1]; j++) {
-		error2[i] += w[1][i][j] * delta[j];
+			for (int j = 0; j < layers[n_layers - 1 - kk]; j++) {
+
+				error2[i] += w[k + 1][i][j] * deltas[n_layers - 2 - kk][j];
+			}
 		}
+		double *activation_prime2 = new double[layers[n_layers - 2 - kk]];
+		one_in_one_out(dsigmoid, activation_prime2, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
+
+		// dsig * error
+		double *delta2 = new double[layers[n_layers - 2-kk]];
+		for (unsigned int x = 0; x < layers[n_layers - 2-kk]; x++) {
+			delta2[x] = activation_prime2[x] * error2[x];
+		}
+
+		deltas[n_layers - 3 - kk] = delta2;
+
 	}
-	double *activation_prime2 = new double[layers[n_layers - 2]];
-	one_in_one_out(dsigmoid, activation_prime2, fires[n_layers - 2], layers[n_layers - 2]);
 
-	// dsig * error
-	double *delta2 = new double[layers[n_layers - 2]];
-	for (unsigned int x = 0; x < layers[n_layers - 2]; x++) {
-		delta2[x] = activation_prime2[x] * error2[x];
-	}
-
-	deltas[n_layers - 3] = delta2;
-
-	/*
-	// Backpropogate errors
-	for i in range(len(self.layers) - 3, -1, -1) :
-		error = np.sum(deltas[0] * self.w[i + 1], axis = 1)
-
-		delta = activation_map[self.layer_activations[i]]["f '"](fires[i + 1]) * error * fires[i-2].reshape((-1, 1))
-
-		deltas.insert(0, delta)
-	*/
 	// Apply deltas
 	for (int i = n_layers - 2; i > -1; i--)
 		for (unsigned int j = 0; j < layers[i]; ++j)
 			for (unsigned int k = 0; k < layers[i + 1]; k++) {
 				w[i][j][k] -= learning_rate * deltas[i][k] * fires[i][j];
-				//printf("%f %f\n", deltas[i][k], fires[i][j]);
 			}
 }
 
@@ -443,7 +435,7 @@ int main(){
 
 	int N_CLASS = 10;
 
-	unsigned int N_EP = 5;
+	unsigned int N_EP = 1;
 	for (unsigned int e = 0; e < N_EP; e++) {
 		double total_error = 0; 
 		clock_t begin = clock();
@@ -459,7 +451,7 @@ int main(){
 		clock_t end = clock();
 		double secs = double(end - begin) / CLOCKS_PER_SEC;;
 		
-		printf("%i(%f s): %f\n", e, secs, total_error);
+		printf("%i(%3.0fs): %f\n", e, secs, total_error);
 	}
 	
 	
@@ -599,7 +591,6 @@ Error:
     
     return cudaStatus;
 }
-
 
 template <typename T>
 cudaError_t one_in_one_out(void(*func)(T*, const T*), T *b, const T *a, unsigned int size){
