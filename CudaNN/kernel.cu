@@ -1,5 +1,7 @@
 /*
 Deep neural network accelerated with CUDA.
+
+C++11 & CUDA
 */
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -19,10 +21,10 @@ typedef unsigned char uchar;
 
 /*
 TODO
-- Better use of CUDA
-- Template everything
-- Make object oriented
-- Memory leaks C++ and CUDA
+- Faster w/ CUDA - 260s baseline
+- Template
+- Object Oriented
+- C++ & CUDA memory leaks
 */
 
 template <typename T>
@@ -71,6 +73,7 @@ __global__ void dsigmoid(double *output, const double *input){
 	output[i] = 1.0 - pow(input[i], 2);
 }
 
+// CONVERT
 double *matmul(const double *x, double **mat, const unsigned int maty, const unsigned int matx) {
 	/*
 	Matrix multiplication
@@ -101,6 +104,8 @@ double *matmul(const double *x, double **mat, const unsigned int maty, const uns
 	return output;
 }
 
+
+
 double cross_entropy_loss(double *real, const double target, const unsigned int n_outputs) {
 	/*
 	Cross entropy loss function.
@@ -119,9 +124,9 @@ double cross_entropy_loss(double *real, const double target, const unsigned int 
 	Cross entropy loss.
 	*/
 	double total = 0;
-	for (unsigned int j = 0; j < n_outputs; j++) {
+
+	for (unsigned int j = 0; j < n_outputs; j++)
 		total += exp(real[j]);
-	}
 
 	return -real[(int)target] + log(total);
 }
@@ -170,12 +175,10 @@ double* onehot(double target, int N_CLASS) {
 	double *output = new double[N_CLASS];
 
 	for (int i = 0; i < N_CLASS; i++) {
-		if (i == target) {
+		if (i == target)
 			output[i] = 1.;
-		}
-		else {
+		else
 			output[i] = 0.;
-		}
 	}
 
 	return output;
@@ -196,17 +199,17 @@ int amax(double *real, const unsigned int n_values) {
 	-------
 	int Index of maximum value.
 	*/
+	unsigned int max_idx = n_values;
 	double max = -9999;
-	int m_idx = 0;
 
 	for (unsigned int i = 0; i < n_values; i++) {
 		if (real[i] > max) {
 			max = real[i];
-			m_idx = i;
+			max_idx = i;
 		}
 	}
 
-	return m_idx;
+	return max_idx;
 }
 
 double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int n_layers){
@@ -231,12 +234,12 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 	double **fires = new double*[n_layers];
 	fires[0] = x;
 
+	double *temp;
 	for (unsigned int i = 0; i < n_layers - 1; i++) {
-		double *xx = matmul(fires[i], w[i], layers[i], layers[i+1]);
-		
+		temp = matmul(fires[i], w[i], layers[i], layers[i+1]);
 	
 		fires[i + 1] = new double[layers[i + 1]];
-		one_in_one_out(sigmoid, fires[i+1], xx, layers[i + 1]);
+		one_in_one_out(sigmoid, fires[i+1], temp, layers[i + 1]);
 	}
 
 	return fires;
@@ -265,16 +268,16 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	-------
 	Update weight matrix.
 	*/
-
-	double *error = dcross_entropy_loss(fires[n_layers - 1], target, layers[n_layers - 1]);
-
 	double **deltas = new double*[n_layers - 1];
+	double *error; double *activation_prime; double *delta;
 
-	double *activation_prime = new double[layers[n_layers - 1]];
+	//
+	error = dcross_entropy_loss(fires[n_layers - 1], target, layers[n_layers - 1]);
+
+	activation_prime = new double[layers[n_layers - 1]];
 	one_in_one_out(dsigmoid, activation_prime, fires[n_layers - 1], layers[n_layers - 1]);
 
-	// dsig * error * fires[-2].reshape((-1, 1))
-	double *delta = new double[layers[n_layers - 1]];
+	delta = new double[layers[n_layers - 1]];
 	for (unsigned int x = 0; x < layers[n_layers - 1]; x++) {
 		delta[x] = activation_prime[x] * error[x];
 	}
@@ -284,35 +287,34 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	//// make iterative
 	for (int k = n_layers - 3; k > -1; k--) {
 		int kk = n_layers - 3 - k;
-		double *error2 = new double[layers[n_layers - 2 - kk]];
+
+		delete[] error;
+		error = new double[layers[n_layers - 2 - kk]];
 		for (int i = 0; i < layers[n_layers - 2 - kk]; i++)
 		{
-			error2[i] = 0;
+			error[i] = 0;
 
 			for (int j = 0; j < layers[n_layers - 1 - kk]; j++) {
 
-				error2[i] += w[k + 1][i][j] * deltas[n_layers - 2 - kk][j];
+				error[i] += w[k + 1][i][j] * deltas[n_layers - 2 - kk][j];
 			}
 		}
-		double *activation_prime2 = new double[layers[n_layers - 2 - kk]];
-		one_in_one_out(dsigmoid, activation_prime2, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
 
-		// dsig * error
-		double *delta2 = new double[layers[n_layers - 2-kk]];
+		delete[] activation_prime;
+		activation_prime = new double[layers[n_layers - 2 - kk]];
+		one_in_one_out(dsigmoid, activation_prime, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
+
+		deltas[n_layers - 3 - kk] = new double[layers[n_layers - 2-kk]];
 		for (unsigned int x = 0; x < layers[n_layers - 2-kk]; x++) {
-			delta2[x] = activation_prime2[x] * error2[x];
+			deltas[n_layers - 3 - kk][x] = activation_prime[x] * error[x];
 		}
-
-		deltas[n_layers - 3 - kk] = delta2;
-
 	}
 
 	// Apply deltas
 	for (int i = n_layers - 2; i > -1; i--)
 		for (unsigned int j = 0; j < layers[i]; ++j)
-			for (unsigned int k = 0; k < layers[i + 1]; k++) {
+			for (unsigned int k = 0; k < layers[i + 1]; k++)
 				w[i][j][k] -= learning_rate * deltas[i][k] * fires[i][j];
-			}
 }
 
 uchar** read_mnist_images(string full_path, int& number_of_images, int& image_size){
@@ -389,27 +391,25 @@ int main(){
 	const unsigned int n_layers = 3;
 	const unsigned int layers[n_layers] = {784, 32, 10};
 
-	double learning_rate = .0001;
+	const double learning_rate = .0001;
 
 	double ***w = new double**[n_layers - 1];
 
 	for (unsigned int i = 0; i < n_layers - 1; i++)
 	{
-		double **matrix = new double*[layers[i]];
+		w[i] = new double*[layers[i]];
+
 		for (unsigned int j = 0; j < layers[i]; ++j) {
-			matrix[j] = new double[layers[i + 1]];
+			w[i][j] = new double[layers[i + 1]];
 
 			for (unsigned int k = 0; k < layers[i + 1]; k++) {
-				matrix[j][k] = ((rand() % 100) / 100.) / 5. - .1;
+				w[i][j][k] = ((rand() % 100) / 100.) / 5. - .1;
 
 			}
 		}
-
-		w[i] = matrix;
 	}
 
-	//// Training
-
+	//// Train
 	int N_TRAIN = 60000;
 	int N_TEST = 10000;
 	int IMG_SIZE = 784;
@@ -454,9 +454,7 @@ int main(){
 		printf("%i(%3.0fs): %f\n", e, secs, total_error);
 	}
 	
-	
-
-	//// TEST
+	//// Evaluate
 	uchar *temp_test_labels = read_mnist_labels(TEST_LABEL_PATH, N_TEST);
 	uchar **temp_test_images = read_mnist_images(TEST_IMAGE_PATH, N_TEST, IMG_SIZE);
 
