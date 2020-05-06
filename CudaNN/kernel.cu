@@ -6,13 +6,12 @@ C++11 & CUDA
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-#include <string>
-#include <fstream>
-#include <cuchar>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <ctime>
+#include <string>
+#include <fstream>
 
 
 using namespace std;
@@ -22,10 +21,9 @@ typedef unsigned char uchar;
 /*
 TODO
 - Faster w/ CUDA - 260s baseline
-- Template
 - Object Oriented
-- C++ & CUDA memory leaks
 - Put memory on GPU and leave it there while training / testing
+- C++ & CUDA memory leaks
 */
 
 template <typename T>
@@ -96,7 +94,7 @@ __global__ void dsigmoid(double *output, const double *input){
 }
 
 // CONVERT
-double *matmul(const double *x, double **mat, const unsigned int maty, const unsigned int matx) {
+double *matmul(const double *x, double **mat, const unsigned int &maty, const unsigned int &matx) {
 	/*
 	Matrix multiplication
 
@@ -126,7 +124,7 @@ double *matmul(const double *x, double **mat, const unsigned int maty, const uns
 	return output;
 }
 
-double cross_entropy_loss(double *real, const double target, const unsigned int n_outputs) {
+double cross_entropy_loss(double *real, const double &target, const unsigned int &n_outputs) {
 	/*
 	Cross entropy loss function.
 
@@ -151,8 +149,7 @@ double cross_entropy_loss(double *real, const double target, const unsigned int 
 	return -real[(int)target] + log(total);
 }
 
-// CONVERT
-double *dcross_entropy_loss(const double *real, const double *target, const unsigned int n_outputs) {
+double *dcross_entropy_loss(const double *real, const double *target, const unsigned int &n_outputs) {
 	/*
 	Derivative of cross entropy loss function.
 
@@ -178,8 +175,7 @@ double *dcross_entropy_loss(const double *real, const double *target, const unsi
 	return output;
 }
 
-// CONVERT
-double* onehot(double target, int N_CLASS) {
+double* onehot(const double &target, const int &N_CLASS) {
 	/*
 	Create onehot vector.
 
@@ -206,7 +202,7 @@ double* onehot(double target, int N_CLASS) {
 	return output;
 }
 
-int amax(double *real, const unsigned int n_values) {
+int amax(const double *real, const unsigned int &n_values) {
 	/*
 	Argmax function.
 
@@ -235,7 +231,34 @@ int amax(double *real, const unsigned int n_values) {
 }
 
 // CONVERT
-double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int n_layers){
+double *_forward(double *prev_output, double **matrix, const unsigned int &layer_size, const unsigned int &layernext_size){
+	/*
+	Forward propogate input through network.
+
+	Parameters
+	----------
+	x: double[n]
+		Input vector.
+	w: double[m, n]
+		Weight matrix.
+	layers: uint*
+		Size of each layer in the network.
+	n_layers: uint
+		Number of layers
+
+	Returns
+	-------
+	double* Fires in layer of the network.
+	*/
+	double *fire = new double[layernext_size];
+	fire = matmul(prev_output, matrix, layer_size, layernext_size);
+	
+	CUDA_1i1o(sigmoid, fire, fire, layernext_size);
+
+	return fire;
+}
+
+double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int &n_layers) {
 	/*
 	Forward propogate input through network.
 
@@ -257,12 +280,8 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 	double **fires = new double*[n_layers];
 	fires[0] = x;
 
-	double *temp;
 	for (unsigned int i = 0; i < n_layers - 1; i++) {
-		temp = matmul(fires[i], w[i], layers[i], layers[i+1]);
-	
-		fires[i + 1] = new double[layers[i + 1]];
-		CUDA_1i1o(sigmoid, fires[i+1], temp, layers[i + 1]);
+		fires[i + 1] = _forward(fires[i], w[i], layers[i], layers[i + 1]);
 	}
 
 	return fires;
