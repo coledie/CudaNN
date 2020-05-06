@@ -25,13 +25,35 @@ TODO
 - Template
 - Object Oriented
 - C++ & CUDA memory leaks
+- Put memory on GPU and leave it there while training / testing
 */
 
 template <typename T>
-cudaError_t two_in_one_out(void (*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size);
+cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int size);
 template <typename T>
-cudaError_t one_in_one_out(void(*func)(T*, const T*), T *b, const T *a, unsigned int size);
+cudaError_t CUDA_2i1o(void (*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size);
 
+__global__ void mul(double *output, const double *in1, const double *in2) {
+	/*
+	Matrix multiplication.
+
+	Parameters
+	----------
+	output: double*
+		Output array.
+	in1: double*
+		Input array.
+	in2: double*
+		Input array.
+
+	Effects
+	-------
+	Update output per element with results of in1 and in2 multiplication.
+	*/
+	int i = threadIdx.x;
+
+	output[i] = in1[i] * in2[i];
+}
 
 __global__ void sigmoid(double *output, const double *input){
 	/*
@@ -239,7 +261,7 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 		temp = matmul(fires[i], w[i], layers[i], layers[i+1]);
 	
 		fires[i + 1] = new double[layers[i + 1]];
-		one_in_one_out(sigmoid, fires[i+1], temp, layers[i + 1]);
+		CUDA_1i1o(sigmoid, fires[i+1], temp, layers[i + 1]);
 	}
 
 	return fires;
@@ -271,20 +293,18 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	double **deltas = new double*[n_layers - 1];
 	double *error; double *activation_prime; double *delta;
 
-	//
+	//// Output layer
 	error = dcross_entropy_loss(fires[n_layers - 1], target, layers[n_layers - 1]);
 
 	activation_prime = new double[layers[n_layers - 1]];
-	one_in_one_out(dsigmoid, activation_prime, fires[n_layers - 1], layers[n_layers - 1]);
+	CUDA_1i1o(dsigmoid, activation_prime, fires[n_layers - 1], layers[n_layers - 1]);
 
 	delta = new double[layers[n_layers - 1]];
-	for (unsigned int x = 0; x < layers[n_layers - 1]; x++) {
-		delta[x] = activation_prime[x] * error[x];
-	}
+	CUDA_2i1o(mul, delta, activation_prime, error, layers[n_layers - 1]);
 
 	deltas[n_layers - 2] = delta;
 
-	//// make iterative
+	//// Backpropogate
 	for (int k = n_layers - 3; k > -1; k--) {
 		int kk = n_layers - 3 - k;
 
@@ -302,12 +322,12 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 
 		delete[] activation_prime;
 		activation_prime = new double[layers[n_layers - 2 - kk]];
-		one_in_one_out(dsigmoid, activation_prime, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
+		CUDA_1i1o(dsigmoid, activation_prime, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
 
-		deltas[n_layers - 3 - kk] = new double[layers[n_layers - 2-kk]];
-		for (unsigned int x = 0; x < layers[n_layers - 2-kk]; x++) {
-			deltas[n_layers - 3 - kk][x] = activation_prime[x] * error[x];
-		}
+		delta = new double[layers[n_layers - 2 - kk]];
+		CUDA_2i1o(mul, delta, activation_prime, error, layers[n_layers - 2 - kk]);
+
+		deltas[n_layers - 3 - kk] = delta;
 	}
 
 	// Apply deltas
@@ -494,104 +514,9 @@ int main(){
     return 0;
 }
 
-template <typename T>
-cudaError_t two_in_one_out(void(*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size){
-	/*
-	CUDA function wrapper.
-
-	Parameters
-	----------
-	c: T*
-		Output.
-	a: T*
-		Input.
-	b: T*
-		Input.
-	size: uint
-		Number of values in a, b and c.
-	*/
-	int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Select GPU
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
-
-	// Allocate GPU Buffers
-	// out
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-	// in
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-	// in
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    // Copy inputs from Host -> GPU Buffer
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    // Launch kernel w/ one thread per element.
-	func<<<1, size>>>(dev_c, dev_a, dev_b);
-
-    // Get kernel launch errors
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-
-	// Wait for kernel finish
-	cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
-
-	// Copy outputs from GPU Buffer -> Host
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
-}
 
 template <typename T>
-cudaError_t one_in_one_out(void(*func)(T*, const T*), T *b, const T *a, unsigned int size){
+cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int size) {
 	/*
 	CUDA function wrapper.
 
@@ -604,8 +529,8 @@ cudaError_t one_in_one_out(void(*func)(T*, const T*), T *b, const T *a, unsigned
 	size: uint
 		Number of values in a and b.
 	*/
-	double *dev_a = 0;
-	double *dev_b = 0;
+	T *dev_a = 0;
+	T *dev_b = 0;
 	cudaError_t cudaStatus;
 
 	// Select GPU
@@ -618,21 +543,21 @@ cudaError_t one_in_one_out(void(*func)(T*, const T*), T *b, const T *a, unsigned
 
 	// Allocate GPU Buffers
 	// out
-	cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(double));
+	cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(T));
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
 		goto Error;
 	}
 
 	// in
-	cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(double));
+	cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(T));
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
 		goto Error;
 	}
 
 	// Copy inputs from Host -> GPU Buffer
-	cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(double), cudaMemcpyHostToDevice);
+	cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy failed!");
 		goto Error;
@@ -657,7 +582,7 @@ cudaError_t one_in_one_out(void(*func)(T*, const T*), T *b, const T *a, unsigned
 	}
 
 	// Copy outputs from GPU Buffer -> Host
-	cudaStatus = cudaMemcpy(b, dev_b, size * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaStatus = cudaMemcpy(b, dev_b, size * sizeof(T), cudaMemcpyDeviceToHost);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy failed!");
 		goto Error;
@@ -668,4 +593,101 @@ Error:
 	cudaFree(dev_a);
 
 	return cudaStatus;
+}
+
+
+template <typename T>
+cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size){
+	/*
+	CUDA function wrapper.
+
+	Parameters
+	----------
+	c: T*
+		Output.
+	a: T*
+		Input.
+	b: T*
+		Input.
+	size: uint
+		Number of values in a, b and c.
+	*/
+	T *dev_a = 0;
+    T *dev_b = 0;
+    T *dev_c = 0;
+    cudaError_t cudaStatus;
+
+    // Select GPU
+    cudaStatus = cudaSetDevice(0);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+        goto Error;
+    }
+
+
+	// Allocate GPU Buffers
+	// out
+    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(T));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+	// in
+    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(T));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+	// in
+    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(T));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    // Copy inputs from Host -> GPU Buffer
+    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(T), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    // Launch kernel w/ one thread per element.
+	func<<<1, size>>>(dev_c, dev_a, dev_b);
+
+    // Get kernel launch errors
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
+    }
+
+	// Wait for kernel finish
+	cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+        goto Error;
+    }
+
+	// Copy outputs from GPU Buffer -> Host
+    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(T), cudaMemcpyDeviceToHost);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+Error:
+    cudaFree(dev_c);
+    cudaFree(dev_a);
+    cudaFree(dev_b);
+    
+    return cudaStatus;
 }
