@@ -337,7 +337,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 				w[i][j][k] -= learning_rate * deltas[i][k] * fires[i][j];
 }
 
-uchar** read_mnist_images(string full_path, int& number_of_images, int& image_size){
+double** read_mnist_images(string full_path, int& number_of_images, int& image_size){
 	auto reverseInt = [](int i) {
 		unsigned char c1, c2, c3, c4;
 		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
@@ -365,14 +365,25 @@ uchar** read_mnist_images(string full_path, int& number_of_images, int& image_si
 			_dataset[i] = new uchar[image_size];
 			file.read((char *)_dataset[i], image_size);
 		}
-		return _dataset;
+
+		double **train_images = new double*[number_of_images];
+		for (int i = 0; i < number_of_images; i++) {
+		
+			train_images[i] = new double[image_size];
+
+			for (int j = 0; j < image_size; j++) {
+				train_images[i][j] = (double)(_dataset[i][j]) / 255.;
+			}
+		}
+
+		return train_images;
 	}
 	else {
 		throw runtime_error("Cannot open file `" + full_path + "`!");
 	}
 }
 
-uchar* read_mnist_labels(string full_path, int& number_of_labels){
+double* read_mnist_labels(string full_path, int& number_of_labels){
 	auto reverseInt = [](int i) {
 		unsigned char c1, c2, c3, c4;
 		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
@@ -396,7 +407,13 @@ uchar* read_mnist_labels(string full_path, int& number_of_labels){
 		for (int i = 0; i < number_of_labels; i++) {
 			file.read((char*)&_dataset[i], 1);
 		}
-		return _dataset;
+
+		//
+		double *train_labels = new double[number_of_labels];
+		for (int i = 0; i < number_of_labels; i++)
+			train_labels[i] = (double) _dataset[i];
+
+		return train_labels;
 	}
 	else {
 		throw runtime_error("Unable to open file `" + full_path + "`!");
@@ -405,13 +422,11 @@ uchar* read_mnist_labels(string full_path, int& number_of_labels){
 
 
 int main(){
-	cudaError_t cudaStatus;
+	//// Setup
+	const double learning_rate = .0001;
 
-	//// Setup Network
 	const unsigned int n_layers = 3;
 	const unsigned int layers[n_layers] = {784, 32, 10};
-
-	const double learning_rate = .0001;
 
 	double ***w = new double**[n_layers - 1];
 
@@ -424,38 +439,23 @@ int main(){
 
 			for (unsigned int k = 0; k < layers[i + 1]; k++) {
 				w[i][j][k] = ((rand() % 100) / 100.) / 5. - .1;
-
 			}
 		}
 	}
 
 	//// Train
-	int N_TRAIN = 60000;
-	int N_TEST = 10000;
 	int IMG_SIZE = 784;
+	int N_TRAIN = 60000;
+	unsigned int N_EP = 1;
 
 	string TRAIN_LABEL_PATH = "C:\\MNIST\\train-labels.idx1-ubyte";
 	string TRAIN_IMAGE_PATH = "C:\\MNIST\\train-images.idx3-ubyte";
-	string TEST_LABEL_PATH = "C:\\MNIST\\t10k-labels.idx1-ubyte";
-	string TEST_IMAGE_PATH = "C:\\MNIST\\t10k-images.idx3-ubyte";
 
-	uchar *temp_train_labels = read_mnist_labels(TRAIN_LABEL_PATH, N_TRAIN);
-	uchar **temp_train_images = read_mnist_images(TRAIN_IMAGE_PATH, N_TRAIN, IMG_SIZE);
+	double *train_labels = read_mnist_labels(TRAIN_LABEL_PATH, N_TRAIN);
+	double **train_images = read_mnist_images(TRAIN_IMAGE_PATH, N_TRAIN, IMG_SIZE);
 
-	double *train_labels = new double[N_TRAIN];
-	double **train_images = new double*[N_TRAIN];
-	for (int i = 0; i < N_TRAIN; i++) {
-		train_labels[i] = (double)(temp_train_labels[i]);
+	unsigned int N_CLASS = layers[n_layers - 1];
 
-		train_images[i] = new double[IMG_SIZE];
-		for (int j = 0; j < IMG_SIZE; j++) {
-			train_images[i][j] = (double)(temp_train_images[i][j]) / 255.;
-		}
-	}
-
-	int N_CLASS = 10;
-
-	unsigned int N_EP = 1;
 	for (unsigned int e = 0; e < N_EP; e++) {
 		double total_error = 0; 
 		clock_t begin = clock();
@@ -475,41 +475,27 @@ int main(){
 	}
 	
 	//// Evaluate
-	uchar *temp_test_labels = read_mnist_labels(TEST_LABEL_PATH, N_TEST);
-	uchar **temp_test_images = read_mnist_images(TEST_IMAGE_PATH, N_TEST, IMG_SIZE);
+	int N_TEST = 10000;
 
-	double *test_labels = new double[N_TEST];
-	double **test_images = new double*[N_TEST];
-	for (int i = 0; i < N_TEST; i++) {
-		test_labels[i] = (double)(temp_test_labels[i]);
-		
-		test_images[i] = new double[IMG_SIZE];
-		for (int j = 0; j < IMG_SIZE; j++)
-			test_images[i][j] = (double)(temp_test_images[i][j]) / 255.;
-	}
+	string TEST_LABEL_PATH = "C:\\MNIST\\t10k-labels.idx1-ubyte";
+	string TEST_IMAGE_PATH = "C:\\MNIST\\t10k-images.idx3-ubyte";
 
-	int total = 0;
-	int n_right = 0;
+	double *test_labels = read_mnist_labels(TEST_LABEL_PATH, N_TEST);
+	double **test_images = read_mnist_images(TEST_IMAGE_PATH, N_TEST, IMG_SIZE);
+
+	int n_right = 0; int real; double **fires;
 	for (unsigned int i = 0; i < N_TEST; i++) {
-		double **fires = forward(test_images[i], w, layers, n_layers);
+		fires = forward(test_images[i], w, layers, n_layers);
 
-		double real = (double) amax(fires[n_layers - 1], N_CLASS);
-		double target = test_labels[i];
+		real = amax(fires[n_layers - 1], N_CLASS);
 
-		total += 1;
-		if (real == target) {
+		if (real == test_labels[i])
 			n_right += 1;
-		}
 	}
-	printf("Correct: %f", ((float)n_right) / ((float)total));
+	printf("Correct: %f", ((float)n_right) / ((float)N_TEST));
 
 	//// Cleanup
-	// Exit profiling and tracing tools 
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
+	cudaDeviceReset();
 
     return 0;
 }
