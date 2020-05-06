@@ -126,8 +126,6 @@ double *matmul(const double *x, double **mat, const unsigned int maty, const uns
 	return output;
 }
 
-
-
 double cross_entropy_loss(double *real, const double target, const unsigned int n_outputs) {
 	/*
 	Cross entropy loss function.
@@ -147,12 +145,13 @@ double cross_entropy_loss(double *real, const double target, const unsigned int 
 	*/
 	double total = 0;
 
-	for (unsigned int j = 0; j < n_outputs; j++)
-		total += exp(real[j]);
+	for (unsigned int i = 0; i < n_outputs; i++)
+		total += exp(real[i]);
 
 	return -real[(int)target] + log(total);
 }
 
+// CONVERT
 double *dcross_entropy_loss(const double *real, const double *target, const unsigned int n_outputs) {
 	/*
 	Derivative of cross entropy loss function.
@@ -179,6 +178,7 @@ double *dcross_entropy_loss(const double *real, const double *target, const unsi
 	return output;
 }
 
+// CONVERT
 double* onehot(double target, int N_CLASS) {
 	/*
 	Create onehot vector.
@@ -234,6 +234,7 @@ int amax(double *real, const unsigned int n_values) {
 	return max_idx;
 }
 
+// CONVERT
 double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int n_layers){
 	/*
 	Forward propogate input through network.
@@ -267,7 +268,8 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 	return fires;
 }
 
-void backward(double ***w, const double *target, double **fires, const unsigned int *layers, const unsigned int n_layers, double learning_rate) {
+// CONVERT
+void backward(double ***w, const double *target, double **fires, const unsigned int *layers, const unsigned int n_layers, const double learning_rate) {
 	/*
 	Cross entropy loss function.
 
@@ -332,9 +334,9 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 
 	// Apply deltas
 	for (int i = n_layers - 2; i > -1; i--)
-		for (unsigned int j = 0; j < layers[i]; ++j)
-			for (unsigned int k = 0; k < layers[i + 1]; k++)
-				w[i][j][k] -= learning_rate * deltas[i][k] * fires[i][j];
+		for (unsigned int y = 0; y < layers[i]; y++)
+			for (unsigned int x = 0; x < layers[i + 1]; x++)
+				w[i][y][x] -= learning_rate * fires[i][y] * deltas[i][x];
 }
 
 double** read_mnist_images(string full_path, int& number_of_images, int& image_size){
@@ -366,6 +368,7 @@ double** read_mnist_images(string full_path, int& number_of_images, int& image_s
 			file.read((char *)_dataset[i], image_size);
 		}
 
+		//
 		double **train_images = new double*[number_of_images];
 		for (int i = 0; i < number_of_images; i++) {
 		
@@ -434,11 +437,11 @@ int main(){
 	{
 		w[i] = new double*[layers[i]];
 
-		for (unsigned int j = 0; j < layers[i]; ++j) {
-			w[i][j] = new double[layers[i + 1]];
+		for (unsigned int y = 0; y < layers[i]; y++) {
+			w[i][y] = new double[layers[i + 1]];
 
-			for (unsigned int k = 0; k < layers[i + 1]; k++) {
-				w[i][j][k] = ((rand() % 100) / 100.) / 5. - .1;
+			for (unsigned int x = 0; x < layers[i + 1]; x++) {
+				w[i][y][x] = ((rand() % 100) / 100.) / 5. - .1;
 			}
 		}
 	}
@@ -526,7 +529,6 @@ cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int 
 		goto Error;
 	}
 
-
 	// Allocate GPU Buffers
 	// out
 	cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(T));
@@ -549,21 +551,20 @@ cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int 
 		goto Error;
 	}
 
-
 	// Launch kernel w/ one thread per element.
 	func << <1, size >> > (dev_b, dev_a);
 
 	// Get kernel launch errors
 	cudaStatus = cudaGetLastError();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
 		goto Error;
 	}
 
 	// Wait for kernel finish
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
 		goto Error;
 	}
 
@@ -580,7 +581,6 @@ Error:
 
 	return cudaStatus;
 }
-
 
 template <typename T>
 cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size){
@@ -609,7 +609,6 @@ cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *c, const T *a, con
         fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
         goto Error;
     }
-
 
 	// Allocate GPU Buffers
 	// out
@@ -652,14 +651,14 @@ cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *c, const T *a, con
     // Get kernel launch errors
     cudaStatus = cudaGetLastError();
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
         goto Error;
     }
 
 	// Wait for kernel finish
 	cudaStatus = cudaDeviceSynchronize();
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
         goto Error;
     }
 
