@@ -114,13 +114,11 @@ double *matmul(const double *x, double **mat, const unsigned int &maty, const un
 	double *output = new double[matx];
 
 	for (unsigned int i = 0; i < matx; i++) {
-		double temp = 0;
+		output[i] = 0;
 
 		for (unsigned int j = 0; j < maty; j++) {
-			temp += x[j] * mat[j][i];
+			output[i] += x[j] * mat[j][i];
 		}
-
-		output[i] = temp;
 	}
 
 	return output;
@@ -333,21 +331,11 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 		int kk = n_layers - 3 - k;
 
 		delete[] error;
-		error = new double[layers[n_layers - 2 - kk]];
-		for (int i = 0; i < layers[n_layers - 2 - kk]; i++)
-		{
-			error[i] = 0;
-
-			for (int j = 0; j < layers[n_layers - 1 - kk]; j++) {
-
-				error[i] += w[k + 1][i][j] * deltas[n_layers - 2 - kk][j];
-			}
-		}
+		error = matmul(deltas[n_layers - 2 - kk], w[k + 1], layers[n_layers - 1 - kk], layers[n_layers - 2 - kk]);
 
 		delete[] activation_prime;
 		CUDA_1i1o(dsigmoid, activation_prime, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
 
-		delta = new double[layers[n_layers - 2 - kk]];
 		CUDA_2i1o(mul, delta, activation_prime, error, layers[n_layers - 2 - kk]);
 
 		deltas[n_layers - 3 - kk] = delta;
