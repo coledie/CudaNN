@@ -20,9 +20,11 @@ typedef unsigned char uchar;
 
 /*
 TODO
-- Faster w/ CUDA - 260s baseline
-- Object Oriented
 - Put memory on GPU and leave it there while training / testing
+
+- Faster w/ CUDA - 260s baseline
+- Need to flatten matricies for gpu use
+- Object Oriented
 - C++ & CUDA memory leaks
 */
 
@@ -542,60 +544,28 @@ cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *&b, const T *a, unsigned int
 	cudaError_t cudaStatus;
 
 	// Select GPU
-	cudaStatus = cudaSetDevice(0);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-		goto Error;
-	}
-
+	cudaSetDevice(0);
+	
 	// Allocate GPU Buffers
-	// out
-	cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(T));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		goto Error;
-	}
-
-	// in
-	cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(T));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		goto Error;
-	}
-
+	cudaMalloc((void**)&dev_b, size * sizeof(T));
+	cudaMalloc((void**)&dev_a, size * sizeof(T));
+	
 	// Copy inputs from Host -> GPU Buffer
-	cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
-		goto Error;
-	}
-
+	cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
+	
 	// Launch kernel w/ one thread per element.
 	func << <1, size >> > (dev_b, dev_a);
 
 	// Get kernel launch errors
-	cudaStatus = cudaGetLastError();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-		goto Error;
-	}
-
+	cudaGetLastError();
+	
 	// Wait for kernel finish
-	cudaStatus = cudaDeviceSynchronize();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
-		goto Error;
-	}
-
+	cudaDeviceSynchronize();
+	
 	// Copy outputs from GPU Buffer -> Host
 	b = new T[size];
-	cudaStatus = cudaMemcpy(b, dev_b, size * sizeof(T), cudaMemcpyDeviceToHost);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
-		goto Error;
-	}
+	cudaMemcpy(b, dev_b, size * sizeof(T), cudaMemcpyDeviceToHost);
 
-Error:
 	cudaFree(dev_b);
 	cudaFree(dev_a);
 
@@ -624,73 +594,32 @@ cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *&c, const T *a, co
     cudaError_t cudaStatus;
 
     // Select GPU
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
+    cudaSetDevice(0);
+    
 	// Allocate GPU Buffers
-	// out
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(T));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	cudaMalloc((void**)&dev_c, size * sizeof(T));
 
-	// in
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(T));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-	// in
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(T));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	cudaMalloc((void**)&dev_a, size * sizeof(T));
+    cudaMalloc((void**)&dev_b, size * sizeof(T));
 
     // Copy inputs from Host -> GPU Buffer
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+    cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
 
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(T), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+    cudaMemcpy(dev_b, b, size * sizeof(T), cudaMemcpyHostToDevice);
 
     // Launch kernel w/ one thread per element.
 	func<<<1, size>>>(dev_c, dev_a, dev_b);
 
     // Get kernel launch errors
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
+    cudaGetLastError();
 
 	// Wait for kernel finish
-	cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
-        goto Error;
-    }
+	cudaDeviceSynchronize();
 
 	// Copy outputs from GPU Buffer -> Host
 	c = new T[size];
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(T), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+    cudaMemcpy(c, dev_c, size * sizeof(T), cudaMemcpyDeviceToHost);
 
-Error:
     cudaFree(dev_c);
     cudaFree(dev_a);
     cudaFree(dev_b);
