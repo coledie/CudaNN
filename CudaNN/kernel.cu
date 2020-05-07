@@ -27,9 +27,9 @@ TODO
 */
 
 template <typename T>
-cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int size);
+cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *&b, const T *a, unsigned int size);
 template <typename T>
-cudaError_t CUDA_2i1o(void (*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size);
+cudaError_t CUDA_2i1o(void (*func)(T*, const T*, const T*), T *&c, const T *a, const T *b, unsigned int size);
 
 __global__ void mul(double *output, const double *in1, const double *in2) {
 	/*
@@ -250,10 +250,13 @@ double *_forward(double *prev_output, double **matrix, const unsigned int &layer
 	-------
 	double* Fires in layer of the network.
 	*/
-	double *fire = new double[layernext_size];
-	fire = matmul(prev_output, matrix, layer_size, layernext_size);
-	
-	CUDA_1i1o(sigmoid, fire, fire, layernext_size);
+	double *fire;
+	double *temp = new double[layernext_size];
+	temp = matmul(prev_output, matrix, layer_size, layernext_size);
+
+	CUDA_1i1o(sigmoid, fire, temp, layernext_size);
+
+	delete[] temp;
 
 	return fire;
 }
@@ -317,10 +320,8 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	//// Output layer
 	error = dcross_entropy_loss(fires[n_layers - 1], target, layers[n_layers - 1]);
 
-	activation_prime = new double[layers[n_layers - 1]];
 	CUDA_1i1o(dsigmoid, activation_prime, fires[n_layers - 1], layers[n_layers - 1]);
 
-	delta = new double[layers[n_layers - 1]];
 	CUDA_2i1o(mul, delta, activation_prime, error, layers[n_layers - 1]);
 
 	deltas[n_layers - 2] = delta;
@@ -342,7 +343,6 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 		}
 
 		delete[] activation_prime;
-		activation_prime = new double[layers[n_layers - 2 - kk]];
 		CUDA_1i1o(dsigmoid, activation_prime, fires[n_layers - 2 - kk], layers[n_layers - 2-kk]);
 
 		delta = new double[layers[n_layers - 2 - kk]];
@@ -524,7 +524,7 @@ int main(){
 
 
 template <typename T>
-cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int size) {
+cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *&b, const T *a, unsigned int size) {
 	/*
 	CUDA function wrapper.
 
@@ -588,6 +588,7 @@ cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *b, const T *a, unsigned int 
 	}
 
 	// Copy outputs from GPU Buffer -> Host
+	b = new T[size];
 	cudaStatus = cudaMemcpy(b, dev_b, size * sizeof(T), cudaMemcpyDeviceToHost);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy failed!");
@@ -602,7 +603,7 @@ Error:
 }
 
 template <typename T>
-cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *c, const T *a, const T *b, unsigned int size){
+cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *&c, const T *a, const T *b, unsigned int size){
 	/*
 	CUDA function wrapper.
 
@@ -682,6 +683,7 @@ cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *c, const T *a, con
     }
 
 	// Copy outputs from GPU Buffer -> Host
+	c = new T[size];
     cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(T), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
