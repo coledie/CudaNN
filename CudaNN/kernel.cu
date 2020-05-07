@@ -20,10 +20,7 @@ typedef unsigned char uchar;
 
 /*
 TODO
-- Put memory on GPU and leave it there while training / testing
-
-- Faster w/ CUDA - 260s baseline
-- Need to flatten matricies for gpu use
+- .28% 1 ep, .67% 5 ep
 - Object Oriented
 - C++ & CUDA memory leaks
 */
@@ -149,7 +146,7 @@ double cross_entropy_loss(double *real, const double &target, const unsigned int
 	return -real[(int)target] + log(total);
 }
 
-double *dcross_entropy_loss(const double *real, const double *target, const unsigned int &n_outputs) {
+__global__ void dcross_entropy_loss(double *output, const double *real, const double *target, const unsigned int n_outputs) {
 	/*
 	Derivative of cross entropy loss function.
 
@@ -166,13 +163,9 @@ double *dcross_entropy_loss(const double *real, const double *target, const unsi
 	-------
 	Derivative of cross entropy loss.
 	*/
+	int i = threadIdx.x;
 
-	double *output = new double[n_outputs];
-
-	for (unsigned int i = 0; i < n_outputs; i++)
-		output[i] = (real[i] - target[i]) / n_outputs;
-
-	return output;
+	output[i] = (real[i] - target[i]) / n_outputs;
 }
 
 double* onehot(const double &target, const int &N_CLASS) {
@@ -315,10 +308,16 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	*/
 	// Select GPU
 	cudaSetDevice(0);
-	
+
 	// Allocate GPU Buffers
+	double *gpu_target = 0;
+	cudaMalloc((void**)&gpu_target, layers[n_layers - 1] * sizeof(double));
+	cudaMemcpy(gpu_target, target, layers[n_layers - 1] * sizeof(double), cudaMemcpyHostToDevice);
+
 	double *gpu_activation_prime = 0;
 	cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 1] * sizeof(double));
+	double *gpu_error = 0;
+	cudaMalloc((void**)&gpu_error, layers[n_layers - 1] * sizeof(double));
 	double *gpu_delta = 0;
 	cudaMalloc((void**)&gpu_delta, layers[n_layers - 1] * sizeof(double));
 
@@ -330,18 +329,14 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 
 	//
 	double **deltas = new double*[n_layers - 1];
-	double *error;
-
+	
 	//// Output layer
-	error = dcross_entropy_loss(fires[n_layers - 1], target, layers[n_layers - 1]);
+	dcross_entropy_loss<<<1, layers[n_layers-1]>>>(gpu_error, gpu_fires[n_layers - 1], gpu_target, layers[n_layers - 1]);
 
 	dsigmoid<<<1, layers[n_layers-1]>>>(gpu_activation_prime, gpu_fires[n_layers-1]);
 	cudaDeviceSynchronize();
 
-	double *gpu_error = 0;
-	cudaMalloc((void**)&gpu_error, layers[n_layers - 1] * sizeof(double));
-	cudaMemcpy(gpu_error, error, layers[n_layers - 1] * sizeof(double), cudaMemcpyHostToDevice);
-
+	
 	mul<<<1, layers[n_layers - 1]>>>(gpu_delta, gpu_activation_prime, gpu_error);
 	cudaDeviceSynchronize();
 
@@ -352,7 +347,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	for (int k = n_layers - 3; k > -1; k--) {
 		int kk = n_layers - 3 - k;
 
-		delete[] error;
+		double *error;
 		error = matmul(deltas[n_layers - 2 - kk], w[k + 1], layers[n_layers - 1 - kk], layers[n_layers - 2 - kk]);
 
 		cudaFree(gpu_activation_prime);
@@ -364,6 +359,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 		cudaFree(gpu_error);
 		cudaMalloc((void**)&gpu_error, layers[n_layers - 2 - kk] * sizeof(double));
 		cudaMemcpy(gpu_error, error, layers[n_layers - 2 - kk] * sizeof(double), cudaMemcpyHostToDevice);
+		delete[] error;
 
 		dsigmoid<<<1, layers[n_layers - 2 - kk]>>>(gpu_activation_prime, gpu_fires[n_layers - 2 - kk]);
 		cudaDeviceSynchronize();
@@ -374,9 +370,6 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 		deltas[n_layers - 3 - kk] = new double[layers[n_layers - 2 - kk]];
 		cudaMemcpy(deltas[n_layers - 3 - kk], gpu_delta, layers[n_layers - 2 - kk] * sizeof(double), cudaMemcpyDeviceToHost);
 	}
-	cudaFree(gpu_activation_prime);
-	cudaFree(gpu_delta);
-	cudaFree(gpu_error);
 
 	// Apply deltas
 	for (int i = n_layers - 2; i > -1; i--)
@@ -384,13 +377,17 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 			for (unsigned int x = 0; x < layers[i + 1]; x++)
 				w[i][y][x] -= learning_rate * fires[i][y] * deltas[i][x];
 
+	//
 	for (int i = 0; i < n_layers - 1; i++) {
 		delete[] deltas[i];
 		cudaFree(gpu_fires[i]);
 	}
-	delete[] error;
 	delete[] gpu_fires;
 	delete[] deltas;
+
+	cudaFree(gpu_activation_prime);
+	cudaFree(gpu_delta);
+	cudaFree(gpu_error);
 }
 
 double** read_mnist_images(string full_path, int& number_of_images, int& image_size){
