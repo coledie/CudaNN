@@ -20,8 +20,10 @@ typedef unsigned char uchar;
 
 /*
 TODO
-- Get backprop to consistent .28 1 ep accuracy
- -- Readd the error iterator and see if fixes
+- Backprop fully gpu based
+* error backprop, weight update
+- Forward GPU based
+* matmul, full conversion
 - Object Oriented
 - C++ & CUDA memory leaks
 */
@@ -93,8 +95,32 @@ __global__ void dsigmoid(double *output, const double *input){
 	output[i] = 1.0 - pow(input[i], 2);
 }
 
+__global__ void matmul(double *output, const double *x, double **mat, const unsigned int &maty) {
+	/*
+	Matrix multiplication
+
+	Parameters
+	----------
+	x: double[n]
+	mat: double[m, n]
+	maty: int = m
+	matx: int = n
+
+	Returns
+	-------
+	double[m] Output of matrix multiplication.
+	*/
+	int i = threadIdx.x;
+
+	output[i] = 0;
+
+	for (unsigned int j = 0; j < maty; j++) {
+		output[i] += x[j] * mat[j][i];
+	}
+}
+
 // CONVERT
-double *matmul(const double *x, double **mat, const unsigned int &maty, const unsigned int &matx) {
+double *matmul_old(const double *x, double **mat, const unsigned int &maty, const unsigned int &matx) {
 	/*
 	Matrix multiplication
 
@@ -224,37 +250,6 @@ int amax(const double *real, const unsigned int &n_values) {
 	return max_idx;
 }
 
-// CONVERT
-double *_forward(double *prev_output, double **matrix, const unsigned int &layer_size, const unsigned int &layernext_size){
-	/*
-	Forward propogate input through network.
-
-	Parameters
-	----------
-	x: double[n]
-		Input vector.
-	w: double[m, n]
-		Weight matrix.
-	layers: uint*
-		Size of each layer in the network.
-	n_layers: uint
-		Number of layers
-
-	Returns
-	-------
-	double* Fires in layer of the network.
-	*/
-	double *fire;
-	double *temp = new double[layernext_size];
-	temp = matmul(prev_output, matrix, layer_size, layernext_size);
-
-	CUDA_1i1o(sigmoid, fire, temp, layernext_size);
-
-	delete[] temp;
-
-	return fire;
-}
-
 double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int &n_layers) {
 	/*
 	Forward propogate input through network.
@@ -278,7 +273,10 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 	fires[0] = x;
 
 	for (unsigned int i = 0; i < n_layers - 1; i++) {
-		fires[i + 1] = _forward(fires[i], w[i], layers[i], layers[i + 1]);
+		double *temp = new double[layers[i + 1]];
+		temp = matmul_old(fires[i], w[i], layers[i], layers[i + 1]);
+
+		CUDA_1i1o(sigmoid, fires[i + 1], temp, layers[i + 1]);
 	}
 
 	return fires;
