@@ -24,7 +24,9 @@ TODO
 * error backprop, weight update
 - Object Oriented
 - C++ & CUDA memory leaks
+- Documentation
 - See if too large kernels > 1023 will become an issue
+- matmul and invmatmul into matmul_m, matmul_n .. what order?
 */
 
 template <typename T>
@@ -115,6 +117,29 @@ __global__ void matmul(double *output, const double *x, const double *mat, const
 
 	for (unsigned int j = 0; j < maty; j++) {
 		output[i] += x[j] * mat[j * matx + i];
+	}
+}
+__global__ void invmatmul(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
+	/*
+	Matrix multiplication
+
+	Parameters
+	----------
+	x: double[n]
+	mat: double[m, n]
+	maty: int = m
+	matx: int = n
+
+	Returns
+	-------
+	double[m] Output of matrix multiplication.
+	*/
+	int i = threadIdx.x;
+
+	output[i] = 0;
+
+	for (unsigned int j = 0; j < matx; j++) {
+		output[i] += x[j] * mat[i * matx + j];
 	}
 }
 
@@ -308,6 +333,14 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 	cudaSetDevice(0);
 
 	// Allocate GPU Buffers
+	double **gpu_w = new double*[n_layers - 1];
+	for (int i = 0; i < n_layers - 1; i++) {
+		int size = layers[i] * layers[i + 1];
+
+		cudaMalloc((void**)&gpu_w[i], size * sizeof(double));
+		cudaMemcpy(gpu_w[i], w[i], size * sizeof(double), cudaMemcpyHostToDevice);
+	}
+
 	double *gpu_target = 0;
 	cudaMalloc((void**)&gpu_target, layers[n_layers - 1] * sizeof(double));
 	cudaMemcpy(gpu_target, target, layers[n_layers - 1] * sizeof(double), cudaMemcpyHostToDevice);
@@ -345,29 +378,15 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 	for (int k = n_layers - 3; k > -1; k--) {
 		int kk = n_layers - 3 - k;
 
-		double *error;
-		//error = matmul(deltas[n_layers - 2 - kk], w[k + 1], layers[n_layers - 1 - kk], layers[n_layers - 2 - kk]);
-		error = new double[layers[n_layers - 2 - kk]];
-		for (int i = 0; i < layers[n_layers - 2 - kk]; i++)
-		{
-			error[i] = 0;
-
-			for (int j = 0; j < layers[n_layers - 1 - kk]; j++) {
-
-				error[i] += w[k + 1][i * layers[n_layers - 1 - kk] + j] * deltas[n_layers - 2 - kk][j];
-			}
-		}
-
+		cudaFree(gpu_error);
+		cudaMalloc((void**)&gpu_error, layers[n_layers - 2 - kk] * sizeof(double));
 		cudaFree(gpu_activation_prime);
 		cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 2 - kk] * sizeof(double));
-
 		cudaFree(gpu_delta);
 		cudaMalloc((void**)&gpu_delta, layers[n_layers - 2 - kk] * sizeof(double));
 
-		cudaFree(gpu_error);
-		cudaMalloc((void**)&gpu_error, layers[n_layers - 2 - kk] * sizeof(double));
-		cudaMemcpy(gpu_error, error, layers[n_layers - 2 - kk] * sizeof(double), cudaMemcpyHostToDevice);
-		delete[] error;
+		invmatmul << <1, layers[n_layers - 2 - kk] >> > (gpu_error, gpu_delta, gpu_w[k + 1], layers[n_layers - 2 - kk], layers[n_layers - 1 - kk]);
+		cudaDeviceSynchronize();
 
 		dsigmoid << <1, layers[n_layers - 2 - kk] >> > (gpu_activation_prime, gpu_fires[n_layers - 2 - kk]);
 		cudaDeviceSynchronize();
@@ -386,6 +405,10 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 				w[i][y * layers[i+1] + x] -= learning_rate * fires[i][y] * deltas[i][x];
 
 	//
+	for (int i = 0; i < n_layers - 1; i++)
+		cudaFree(gpu_w[i]);
+	delete[] gpu_w;
+
 	for (int i = 0; i < n_layers - 1; i++) {
 		delete[] deltas[i];
 		cudaFree(gpu_fires[i]);
