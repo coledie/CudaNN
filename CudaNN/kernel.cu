@@ -29,11 +29,6 @@ TODO
 - matmul and invmatmul into matmul_m, matmul_n .. what order?
 */
 
-template <typename T>
-cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *&b, const T *a, unsigned int size);
-template <typename T>
-cudaError_t CUDA_2i1o(void (*func)(T*, const T*, const T*), T *&c, const T *a, const T *b, unsigned int size);
-
 __global__ void mul(double *output, const double *in1, const double *in2) {
 	/*
 	Matrix multiplication.
@@ -119,6 +114,7 @@ __global__ void matmul(double *output, const double *x, const double *mat, const
 		output[i] += x[j] * mat[j * matx + i];
 	}
 }
+
 __global__ void invmatmul(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
 	/*
 	Matrix multiplication
@@ -380,13 +376,14 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 
 		cudaFree(gpu_error);
 		cudaMalloc((void**)&gpu_error, layers[n_layers - 2 - kk] * sizeof(double));
+		invmatmul << <1, layers[n_layers - 2 - kk] >> > (gpu_error, gpu_delta, gpu_w[k+1], layers[n_layers - 2 - kk], layers[n_layers - 1 - kk]);
+		cudaDeviceSynchronize();
+
 		cudaFree(gpu_activation_prime);
 		cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 2 - kk] * sizeof(double));
+
 		cudaFree(gpu_delta);
 		cudaMalloc((void**)&gpu_delta, layers[n_layers - 2 - kk] * sizeof(double));
-
-		invmatmul << <1, layers[n_layers - 2 - kk] >> > (gpu_error, gpu_delta, gpu_w[k + 1], layers[n_layers - 2 - kk], layers[n_layers - 1 - kk]);
-		cudaDeviceSynchronize();
 
 		dsigmoid << <1, layers[n_layers - 2 - kk] >> > (gpu_activation_prime, gpu_fires[n_layers - 2 - kk]);
 		cudaDeviceSynchronize();
@@ -582,107 +579,4 @@ int main(){
 	cudaDeviceReset();
 
     return 0;
-}
-
-
-template <typename T>
-cudaError_t CUDA_1i1o(void(*func)(T*, const T*), T *&b, const T *a, unsigned int size) {
-	/*
-	CUDA function wrapper.
-
-	Parameters
-	----------
-	b: T*
-		Output.
-	a: T*
-		Input.
-	size: uint
-		Number of values in a and b.
-	*/
-	T *dev_a = 0;
-	T *dev_b = 0;
-	cudaError_t cudaStatus;
-
-	// Select GPU
-	cudaSetDevice(0);
-	
-	// Allocate GPU Buffers
-	cudaMalloc((void**)&dev_b, size * sizeof(T));
-	cudaMalloc((void**)&dev_a, size * sizeof(T));
-	
-	// Copy inputs from Host -> GPU Buffer
-	cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
-	
-	// Launch kernel w/ one thread per element.
-	func << <1, size >> > (dev_b, dev_a);
-
-	// Get kernel launch errors
-	cudaGetLastError();
-	
-	// Wait for kernel finish
-	cudaDeviceSynchronize();
-	
-	// Copy outputs from GPU Buffer -> Host
-	b = new T[size];
-	cudaMemcpy(b, dev_b, size * sizeof(T), cudaMemcpyDeviceToHost);
-
-	cudaFree(dev_b);
-	cudaFree(dev_a);
-
-	return cudaStatus;
-}
-
-template <typename T>
-cudaError_t CUDA_2i1o(void(*func)(T*, const T*, const T*), T *&c, const T *a, const T *b, unsigned int size){
-	/*
-	CUDA function wrapper.
-
-	Parameters
-	----------
-	c: T*
-		Output.
-	a: T*
-		Input.
-	b: T*
-		Input.
-	size: uint
-		Number of values in a, b and c.
-	*/
-	T *dev_a = 0;
-    T *dev_b = 0;
-    T *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Select GPU
-    cudaSetDevice(0);
-    
-	// Allocate GPU Buffers
-	cudaMalloc((void**)&dev_c, size * sizeof(T));
-
-	cudaMalloc((void**)&dev_a, size * sizeof(T));
-    cudaMalloc((void**)&dev_b, size * sizeof(T));
-
-    // Copy inputs from Host -> GPU Buffer
-    cudaMemcpy(dev_a, a, size * sizeof(T), cudaMemcpyHostToDevice);
-
-    cudaMemcpy(dev_b, b, size * sizeof(T), cudaMemcpyHostToDevice);
-
-    // Launch kernel w/ one thread per element.
-	func<<<1, size>>>(dev_c, dev_a, dev_b);
-
-    // Get kernel launch errors
-    cudaGetLastError();
-
-	// Wait for kernel finish
-	cudaDeviceSynchronize();
-
-	// Copy outputs from GPU Buffer -> Host
-	c = new T[size];
-    cudaMemcpy(c, dev_c, size * sizeof(T), cudaMemcpyDeviceToHost);
-
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
 }
