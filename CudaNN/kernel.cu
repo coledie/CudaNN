@@ -24,6 +24,7 @@ TODO
 * error backprop, weight update
 - Object Oriented
 - C++ & CUDA memory leaks
+- See if too large kernels > 1023 will become an issue
 */
 
 template <typename T>
@@ -113,35 +114,8 @@ __global__ void matmul(double *output, const double *x, const double *mat, const
 	output[i] = 0;
 
 	for (unsigned int j = 0; j < maty; j++) {
-		output[i] += x[j] * mat[(j*maty) + i];
+		output[i] += x[j] * mat[j * matx + i];
 	}
-}
-
-double *matmul_old(const double *x, double *mat, const unsigned int &maty, const unsigned int &matx) {
-	/*
-	Matrix multiplication
-
-	Parameters
-	----------
-	x: double[n]
-	mat: double[m, n]
-	maty: int = m
-	matx: int = n
-
-	Returns
-	-------
-	double[m] Output of matrix multiplication.
-	*/
-	double *output = new double[matx];
-	for (unsigned int i = 0; i < matx; i++) {
-		output[i] = 0;
-
-		for (unsigned int j = 0; j < maty; j++) {
-			output[i] += x[j] * mat[j * matx + i];
-		}
-	}
-
-	return output;
 }
 
 double cross_entropy_loss(double *real, const double &target, const unsigned int &n_outputs) {
@@ -284,16 +258,9 @@ double **forward(double *x, double **w, const unsigned int *layers, const unsign
 	
 	//
 	for (unsigned int i = 0; i < n_layers - 1; i++) {
-		
-		double *old_fires = new double[layers[i]];
-		cudaMemcpy(old_fires, gpu_fires[i], layers[i] * sizeof(double), cudaMemcpyDeviceToHost);
-		double *temp = new double[layers[i+1]];
-		temp = matmul_old(old_fires, w[i], layers[i], layers[i+1]);
-		cudaMemcpy(gpu_fires[i+1], temp, layers[i+1] * sizeof(double), cudaMemcpyHostToDevice);
-		/*
 		matmul<<<1, layers[i + 1] >>>(gpu_fires[i+1], gpu_fires[i], gpu_w[i], layers[i], layers[i+1]);		
 		cudaDeviceSynchronize();
-		*/
+
 		sigmoid<<<1, layers[i + 1] >>>(gpu_fires[i + 1], gpu_fires[i + 1]);
 		cudaDeviceSynchronize();
 	}
