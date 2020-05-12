@@ -22,8 +22,6 @@ typedef unsigned char uchar;
 TODO
 - Backprop fully gpu based
 * error backprop, weight update
-- Forward GPU based
-* matmul, full conversion
 - Object Oriented
 - C++ & CUDA memory leaks
 */
@@ -95,7 +93,7 @@ __global__ void dsigmoid(double *output, const double *input){
 	output[i] = 1.0 - pow(input[i], 2);
 }
 
-__global__ void matmul(double *output, const double *x, double **mat, const unsigned int &maty) {
+__global__ void matmul(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
 	/*
 	Matrix multiplication
 
@@ -115,12 +113,11 @@ __global__ void matmul(double *output, const double *x, double **mat, const unsi
 	output[i] = 0;
 
 	for (unsigned int j = 0; j < maty; j++) {
-		output[i] += x[j] * mat[j][i];
+		output[i] += x[j] * mat[(j*maty) + i];
 	}
 }
 
-// CONVERT
-double *matmul_old(const double *x, double **mat, const unsigned int &maty, const unsigned int &matx) {
+double *matmul_old(const double *x, double *mat, const unsigned int &maty, const unsigned int &matx) {
 	/*
 	Matrix multiplication
 
@@ -136,12 +133,11 @@ double *matmul_old(const double *x, double **mat, const unsigned int &maty, cons
 	double[m] Output of matrix multiplication.
 	*/
 	double *output = new double[matx];
-
 	for (unsigned int i = 0; i < matx; i++) {
 		output[i] = 0;
 
 		for (unsigned int j = 0; j < maty; j++) {
-			output[i] += x[j] * mat[j][i];
+			output[i] += x[j] * mat[j * matx + i];
 		}
 	}
 
@@ -250,7 +246,7 @@ int amax(const double *real, const unsigned int &n_values) {
 	return max_idx;
 }
 
-double **forward(double *x, double ***w, const unsigned int *layers, const unsigned int &n_layers) {
+double **forward(double *x, double **w, const unsigned int *layers, const unsigned int &n_layers) {
 	/*
 	Forward propogate input through network.
 
@@ -269,20 +265,56 @@ double **forward(double *x, double ***w, const unsigned int *layers, const unsig
 	-------
 	double** Fires in each layer of the network.
 	*/
-	double **fires = new double*[n_layers];
-	fires[0] = x;
+	// Select GPU
+	cudaSetDevice(0);
 
-	for (unsigned int i = 0; i < n_layers - 1; i++) {
-		double *temp = new double[layers[i + 1]];
-		temp = matmul_old(fires[i], w[i], layers[i], layers[i + 1]);
+	// Allocate GPU Buffers
+	double **gpu_w = new double*[n_layers - 1];
+	for (int i = 0; i < n_layers-1; i++) {
+		int size = layers[i] * layers[i + 1];
 
-		CUDA_1i1o(sigmoid, fires[i + 1], temp, layers[i + 1]);
+		cudaMalloc((void**)&gpu_w[i], size * sizeof(double));
+		cudaMemcpy(gpu_w[i], w[i], size * sizeof(double), cudaMemcpyHostToDevice);
 	}
+
+	double **gpu_fires = new double*[n_layers];
+	for (int i = 0; i < n_layers; i++)
+		cudaMalloc((void**)&gpu_fires[i], layers[i] * sizeof(double));
+	cudaMemcpy(gpu_fires[0], x, layers[0] * sizeof(double), cudaMemcpyHostToDevice);
+	
+	//
+	for (unsigned int i = 0; i < n_layers - 1; i++) {
+		
+		double *old_fires = new double[layers[i]];
+		cudaMemcpy(old_fires, gpu_fires[i], layers[i] * sizeof(double), cudaMemcpyDeviceToHost);
+		double *temp = new double[layers[i+1]];
+		temp = matmul_old(old_fires, w[i], layers[i], layers[i+1]);
+		cudaMemcpy(gpu_fires[i+1], temp, layers[i+1] * sizeof(double), cudaMemcpyHostToDevice);
+		/*
+		matmul<<<1, layers[i + 1] >>>(gpu_fires[i+1], gpu_fires[i], gpu_w[i], layers[i], layers[i+1]);		
+		cudaDeviceSynchronize();
+		*/
+		sigmoid<<<1, layers[i + 1] >>>(gpu_fires[i + 1], gpu_fires[i + 1]);
+		cudaDeviceSynchronize();
+	}
+
+	//
+	double **fires = new double*[n_layers];
+	for (int i = 0; i < n_layers; i++) {
+		fires[i] = new double[layers[i]];
+		cudaMemcpy(fires[i], gpu_fires[i], layers[i] * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaFree(gpu_fires[i]);
+	}
+	delete[] gpu_fires;
+
+	for (int i = 0; i < n_layers - 1; i++)
+		cudaFree(gpu_w[i]);
+	delete[] gpu_w;
 
 	return fires;
 }
 
-void backward(double ***w, const double *target, double **fires, const unsigned int *layers, const unsigned int n_layers, const double learning_rate) {
+void backward(double **w, const double *target, double **fires, const unsigned int *layers, const unsigned int n_layers, const double learning_rate) {
 	/*
 	Cross entropy loss function.
 
@@ -318,7 +350,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	double *gpu_activation_prime = 0;
 	cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 1] * sizeof(double));
 	double *gpu_delta = 0;
-	cudaMalloc((void**)&gpu_delta, layers[n_layers - 1] * sizeof(double));
+	cudaMalloc((void**)&gpu_delta, (int)layers[n_layers - 1] * sizeof(double));
 
 	double **gpu_fires = new double*[n_layers];
 	for (int i = 0; i < n_layers; i++) {
@@ -355,7 +387,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 
 			for (int j = 0; j < layers[n_layers - 1 - kk]; j++) {
 
-				error[i] += w[k + 1][i][j] * deltas[n_layers - 2 - kk][j];
+				error[i] += w[k + 1][i * layers[n_layers - 1 - kk] + j] * deltas[n_layers - 2 - kk][j];
 			}
 		}
 
@@ -384,7 +416,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	for (int i = n_layers - 2; i > -1; i--)
 		for (unsigned int y = 0; y < layers[i]; y++)
 			for (unsigned int x = 0; x < layers[i + 1]; x++)
-				w[i][y][x] -= learning_rate * fires[i][y] * deltas[i][x];
+				w[i][y * layers[i+1] + x] -= learning_rate * fires[i][y] * deltas[i][x];
 
 	//
 	for (int i = 0; i < n_layers - 1; i++) {
@@ -394,6 +426,7 @@ void backward(double ***w, const double *target, double **fires, const unsigned 
 	delete[] gpu_fires;
 	delete[] deltas;
 
+	cudaFree(gpu_target);
 	cudaFree(gpu_activation_prime);
 	cudaFree(gpu_delta);
 	cudaFree(gpu_error);
@@ -491,17 +524,15 @@ int main(){
 	const unsigned int n_layers = 3;
 	const unsigned int layers[n_layers] = {784, 32, 10};
 
-	double ***w = new double**[n_layers - 1];
+	double **w = new double*[n_layers - 1];
 
 	for (unsigned int i = 0; i < n_layers - 1; i++)
 	{
-		w[i] = new double*[layers[i]];
+		w[i] = new double[layers[i] * layers[i+1]];
 
 		for (unsigned int y = 0; y < layers[i]; y++) {
-			w[i][y] = new double[layers[i + 1]];
-
 			for (unsigned int x = 0; x < layers[i + 1]; x++) {
-				w[i][y][x] = ((rand() % 100) / 100.) / 5. - .1;
+				w[i][y * layers[i+1] + x] = ((rand() % 100) / 100.) / 5. - .1;
 			}
 		}
 	}
