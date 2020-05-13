@@ -21,12 +21,10 @@ typedef unsigned char uchar;
 /*
 TODO
 - Backprop fully gpu based
-* error backprop, weight update
-- Object Oriented
+- matmul and invmatmul into matmul_m, matmul_n .. what order?
+- NN Object - keep w, fires always on gpu
 - C++ & CUDA memory leaks
 - Documentation
-- See if too large kernels > 1023 will become an issue
-- matmul and invmatmul into matmul_m, matmul_n .. what order?
 */
 
 __global__ void mul(double *output, const double *in1, const double *in2) {
@@ -376,11 +374,11 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 
 		cudaFree(gpu_error);
 		cudaMalloc((void**)&gpu_error, layers[n_layers - 2 - kk] * sizeof(double));
-		invmatmul << <1, layers[n_layers - 2 - kk] >> > (gpu_error, gpu_delta, gpu_w[k+1], layers[n_layers - 2 - kk], layers[n_layers - 1 - kk]);
-		cudaDeviceSynchronize();
-
 		cudaFree(gpu_activation_prime);
 		cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 2 - kk] * sizeof(double));
+
+		invmatmul << <1, layers[n_layers - 2 - kk] >> > (gpu_error, gpu_delta, gpu_w[k + 1], layers[n_layers - 2 - kk], layers[n_layers - 1 - kk]);
+		cudaDeviceSynchronize();
 
 		cudaFree(gpu_delta);
 		cudaMalloc((void**)&gpu_delta, layers[n_layers - 2 - kk] * sizeof(double));
