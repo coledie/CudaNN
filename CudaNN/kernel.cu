@@ -370,31 +370,29 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 
 	//// Backpropogate
 	for (int k = n_layers - 3; k > -1; k--) {
-		int kk = n_layers - 3 - k;
-
 		cudaFree(gpu_error);
-		cudaMalloc((void**)&gpu_error, layers[n_layers - 2 - kk] * sizeof(double));
+		cudaMalloc((void**)&gpu_error, layers[k + 1] * sizeof(double));
 		cudaFree(gpu_activation_prime);
-		cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 2 - kk] * sizeof(double));
+		cudaMalloc((void**)&gpu_activation_prime, layers[k + 1] * sizeof(double));
 
-		invmatmul << <1, layers[n_layers - 2 - kk] >> > (gpu_error, gpu_delta, gpu_w[k + 1], layers[n_layers - 2 - kk], layers[n_layers - 1 - kk]);
+		invmatmul << <1, layers[k + 1] >> > (gpu_error, gpu_delta, gpu_w[k + 1], layers[k + 1], layers[k + 2]);
 		cudaDeviceSynchronize();
 
 		cudaFree(gpu_delta);
-		cudaMalloc((void**)&gpu_delta, layers[n_layers - 2 - kk] * sizeof(double));
+		cudaMalloc((void**)&gpu_delta, layers[k + 1] * sizeof(double));
 
-		dsigmoid << <1, layers[n_layers - 2 - kk] >> > (gpu_activation_prime, gpu_fires[n_layers - 2 - kk]);
+		dsigmoid << <1, layers[k + 1] >> > (gpu_activation_prime, gpu_fires[k + 1]);
 		cudaDeviceSynchronize();
 
-		mul << <1, layers[n_layers - 2 - kk] >> > (gpu_delta, gpu_activation_prime, gpu_error);
+		mul << <1, layers[k + 1] >> > (gpu_delta, gpu_activation_prime, gpu_error);
 		cudaDeviceSynchronize();
 
-		deltas[n_layers - 3 - kk] = new double[layers[n_layers - 2 - kk]];
-		cudaMemcpy(deltas[n_layers - 3 - kk], gpu_delta, layers[n_layers - 2 - kk] * sizeof(double), cudaMemcpyDeviceToHost);
+		deltas[k] = new double[layers[k + 1]];
+		cudaMemcpy(deltas[k], gpu_delta, layers[k + 1] * sizeof(double), cudaMemcpyDeviceToHost);
 	}
 
 	// Apply deltas
-	for (int i = n_layers - 2; i > -1; i--)
+	for (int i = 0; i < n_layers - 1; i++)
 		for (unsigned int y = 0; y < layers[i]; y++)
 			for (unsigned int x = 0; x < layers[i + 1]; x++)
 				w[i][y * layers[i+1] + x] -= learning_rate * fires[i][y] * deltas[i][x];
