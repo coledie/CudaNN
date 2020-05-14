@@ -19,6 +19,90 @@ using namespace std;
 typedef unsigned char uchar;
 
 
+double** read_mnist_images(string full_path, int& number_of_images, int& image_size) {
+	auto reverseInt = [](int i) {
+		unsigned char c1, c2, c3, c4;
+		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
+		return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
+	};
+
+	ifstream file(full_path, ios::binary);
+
+	if (file.is_open()) {
+		int magic_number = 0, n_rows = 0, n_cols = 0;
+
+		file.read((char *)&magic_number, sizeof(magic_number));
+		magic_number = reverseInt(magic_number);
+
+		if (magic_number != 2051) throw runtime_error("Invalid MNIST image file!");
+
+		file.read((char *)&number_of_images, sizeof(number_of_images)), number_of_images = reverseInt(number_of_images);
+		file.read((char *)&n_rows, sizeof(n_rows)), n_rows = reverseInt(n_rows);
+		file.read((char *)&n_cols, sizeof(n_cols)), n_cols = reverseInt(n_cols);
+
+		image_size = n_rows * n_cols;
+
+		uchar** _dataset = new uchar*[number_of_images];
+		for (int i = 0; i < number_of_images; i++) {
+			_dataset[i] = new uchar[image_size];
+			file.read((char *)_dataset[i], image_size);
+		}
+
+		//
+		double **train_images = new double*[number_of_images];
+		for (int i = 0; i < number_of_images; i++) {
+
+			train_images[i] = new double[image_size];
+
+			for (int j = 0; j < image_size; j++) {
+				train_images[i][j] = (double)(_dataset[i][j]) / 255.;
+			}
+		}
+
+		return train_images;
+	}
+	else {
+		throw runtime_error("Cannot open file `" + full_path + "`!");
+	}
+}
+
+double* read_mnist_labels(string full_path, int& number_of_labels) {
+	auto reverseInt = [](int i) {
+		unsigned char c1, c2, c3, c4;
+		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
+		return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
+	};
+
+	typedef unsigned char uchar;
+
+	ifstream file(full_path, ios::binary);
+
+	if (file.is_open()) {
+		int magic_number = 0;
+		file.read((char *)&magic_number, sizeof(magic_number));
+		magic_number = reverseInt(magic_number);
+
+		if (magic_number != 2049) throw runtime_error("Invalid MNIST label file!");
+
+		file.read((char *)&number_of_labels, sizeof(number_of_labels)), number_of_labels = reverseInt(number_of_labels);
+
+		uchar* _dataset = new uchar[number_of_labels];
+		for (int i = 0; i < number_of_labels; i++) {
+			file.read((char*)&_dataset[i], 1);
+		}
+
+		//
+		double *train_labels = new double[number_of_labels];
+		for (int i = 0; i < number_of_labels; i++)
+			train_labels[i] = (double)_dataset[i];
+
+		return train_labels;
+	}
+	else {
+		throw runtime_error("Unable to open file `" + full_path + "`!");
+	}
+}
+
 int amax(const double *real, const unsigned int &n_values) {
 	/*
 	Argmax function.
@@ -144,90 +228,6 @@ __global__ void matmul_m(double *output, const double *x, const double *mat, con
 	}
 }
 
-double** read_mnist_images(string full_path, int& number_of_images, int& image_size) {
-	auto reverseInt = [](int i) {
-		unsigned char c1, c2, c3, c4;
-		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
-		return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
-	};
-
-	ifstream file(full_path, ios::binary);
-
-	if (file.is_open()) {
-		int magic_number = 0, n_rows = 0, n_cols = 0;
-
-		file.read((char *)&magic_number, sizeof(magic_number));
-		magic_number = reverseInt(magic_number);
-
-		if (magic_number != 2051) throw runtime_error("Invalid MNIST image file!");
-
-		file.read((char *)&number_of_images, sizeof(number_of_images)), number_of_images = reverseInt(number_of_images);
-		file.read((char *)&n_rows, sizeof(n_rows)), n_rows = reverseInt(n_rows);
-		file.read((char *)&n_cols, sizeof(n_cols)), n_cols = reverseInt(n_cols);
-
-		image_size = n_rows * n_cols;
-
-		uchar** _dataset = new uchar*[number_of_images];
-		for (int i = 0; i < number_of_images; i++) {
-			_dataset[i] = new uchar[image_size];
-			file.read((char *)_dataset[i], image_size);
-		}
-
-		//
-		double **train_images = new double*[number_of_images];
-		for (int i = 0; i < number_of_images; i++) {
-
-			train_images[i] = new double[image_size];
-
-			for (int j = 0; j < image_size; j++) {
-				train_images[i][j] = (double)(_dataset[i][j]) / 255.;
-			}
-		}
-
-		return train_images;
-	}
-	else {
-		throw runtime_error("Cannot open file `" + full_path + "`!");
-	}
-}
-
-double* read_mnist_labels(string full_path, int& number_of_labels) {
-	auto reverseInt = [](int i) {
-		unsigned char c1, c2, c3, c4;
-		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
-		return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
-	};
-
-	typedef unsigned char uchar;
-
-	ifstream file(full_path, ios::binary);
-
-	if (file.is_open()) {
-		int magic_number = 0;
-		file.read((char *)&magic_number, sizeof(magic_number));
-		magic_number = reverseInt(magic_number);
-
-		if (magic_number != 2049) throw runtime_error("Invalid MNIST label file!");
-
-		file.read((char *)&number_of_labels, sizeof(number_of_labels)), number_of_labels = reverseInt(number_of_labels);
-
-		uchar* _dataset = new uchar[number_of_labels];
-		for (int i = 0; i < number_of_labels; i++) {
-			file.read((char*)&_dataset[i], 1);
-		}
-
-		//
-		double *train_labels = new double[number_of_labels];
-		for (int i = 0; i < number_of_labels; i++)
-			train_labels[i] = (double)_dataset[i];
-
-		return train_labels;
-	}
-	else {
-		throw runtime_error("Unable to open file `" + full_path + "`!");
-	}
-}
-
 double cross_entropy_loss(double *real, const double &target, const unsigned int &n_outputs) {
 	/*
 	Cross entropy loss function.
@@ -317,11 +317,12 @@ __global__ void dsigmoid(double *output, const double *input) {
 
 class NN {
   private:
-	  const double learning_rate;
-	  const unsigned int n_layers;
-	  const unsigned int *layers;
+	const double learning_rate;
+	const unsigned int n_layers;
+    const unsigned int *layers;
 
-	  double **w;
+	double **w;
+	double **gpu_recent_fires;
 
   public:
 	NN(const double lr, const unsigned int n_l, const unsigned int *l)
@@ -341,7 +342,7 @@ class NN {
 		}
 	}
 
-	double **forward(double *x) {
+	double *forward(double *x) {
 		/*
 		Forward propogate input through network.
 
@@ -387,22 +388,19 @@ class NN {
 		}
 
 		//
-		double **fires = new double*[n_layers];
-		for (int i = 0; i < n_layers; i++) {
-			fires[i] = new double[layers[i]];
-			cudaMemcpy(fires[i], gpu_fires[i], layers[i] * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaFree(gpu_fires[i]);
-		}
-		delete[] gpu_fires;
+		double *output = new double[layers[n_layers - 1]];
+		cudaMemcpy(output, gpu_fires[n_layers-1], layers[n_layers-1] * sizeof(double), cudaMemcpyDeviceToHost);
 
 		for (int i = 0; i < n_layers - 1; i++)
 			cudaFree(gpu_w[i]);
 		delete[] gpu_w;
 
-		return fires;
+		gpu_recent_fires = gpu_fires;
+
+		return output;
 	}
 
-	void backward(const double *target, double **fires) {
+	void backward(const double *target) {
 		/*
 		Cross entropy loss function.
 
@@ -450,17 +448,11 @@ class NN {
 		for (int i = 0; i < n_layers - 1; i++)
 			cudaMalloc((void**)&gpu_deltas[i], (int)layers[i + 1] * sizeof(double));
 
-		double **gpu_fires = new double*[n_layers];
-		for (int i = 0; i < n_layers; i++) {
-			cudaMalloc((void**)&gpu_fires[i], layers[i] * sizeof(double));
-			cudaMemcpy(gpu_fires[i], fires[i], layers[i] * sizeof(double), cudaMemcpyHostToDevice);
-		}
-
 		//// Output layer
-		dcross_entropy_loss << <1, layers[n_layers - 1] >> > (gpu_error, gpu_fires[n_layers - 1], gpu_target, layers[n_layers - 1]);
+		dcross_entropy_loss << <1, layers[n_layers - 1] >> > (gpu_error, gpu_recent_fires[n_layers - 1], gpu_target, layers[n_layers - 1]);
 		cudaDeviceSynchronize();
 
-		dsigmoid << <1, layers[n_layers - 1] >> > (gpu_activation_prime, gpu_fires[n_layers - 1]);
+		dsigmoid << <1, layers[n_layers - 1] >> > (gpu_activation_prime, gpu_recent_fires[n_layers - 1]);
 		cudaDeviceSynchronize();
 
 		mul << <1, layers[n_layers - 1] >> > (gpu_deltas[n_layers - 2], gpu_activation_prime, gpu_error);
@@ -476,7 +468,7 @@ class NN {
 			matmul_m << <1, layers[k + 1] >> > (gpu_error, gpu_deltas[k + 1], gpu_w[k + 1], layers[k + 1], layers[k + 2]);
 			cudaDeviceSynchronize();
 
-			dsigmoid << <1, layers[k + 1] >> > (gpu_activation_prime, gpu_fires[k + 1]);
+			dsigmoid << <1, layers[k + 1] >> > (gpu_activation_prime, gpu_recent_fires[k + 1]);
 			cudaDeviceSynchronize();
 
 			mul << <1, layers[k + 1] >> > (gpu_deltas[k], gpu_activation_prime, gpu_error);
@@ -489,6 +481,13 @@ class NN {
 			cudaFree(gpu_deltas[i]);
 		}
 		delete[] gpu_deltas;
+
+		//
+		double **fires = new double*[n_layers];
+		for (int i = 0; i < n_layers; i++) {
+			fires[i] = new double[layers[i]];
+			cudaMemcpy(fires[i], gpu_recent_fires[i], layers[i] * sizeof(double), cudaMemcpyDeviceToHost);
+		}
 
 		// Apply deltas
 		for (int i = 0; i < n_layers - 1; i++)
@@ -503,9 +502,9 @@ class NN {
 
 		for (int i = 0; i < n_layers - 1; i++) {
 			delete[] deltas[i];
-			cudaFree(gpu_fires[i]);
+			cudaFree(gpu_recent_fires[i]);
 		}
-		delete[] gpu_fires;
+		delete[] gpu_recent_fires;
 		delete[] deltas;
 
 		cudaFree(gpu_target);
@@ -516,65 +515,59 @@ class NN {
 
 
 int main(){
-	//// Setup
+	string TRAIN_LABEL_PATH = "C:\\MNIST\\train-labels.idx1-ubyte";
+	string TRAIN_IMAGE_PATH = "C:\\MNIST\\train-images.idx3-ubyte";
+	string TEST_LABEL_PATH = "C:\\MNIST\\t10k-labels.idx1-ubyte";
+	string TEST_IMAGE_PATH = "C:\\MNIST\\t10k-images.idx3-ubyte";
+
+	unsigned int N_EP = 1;
+
 	const double learning_rate = .0001;
 	const unsigned int n_layers = 3;
 	const unsigned int layers[] = { 784, 32, 10 };
 
 	NN nn(learning_rate, n_layers, layers);
 
-	//// Train
-	int IMG_SIZE = 784;
-	int N_TRAIN = 60000;
-	unsigned int N_EP = 1;
-
-	string TRAIN_LABEL_PATH = "C:\\MNIST\\train-labels.idx1-ubyte";
-	string TRAIN_IMAGE_PATH = "C:\\MNIST\\train-images.idx3-ubyte";
+	// Train
+	int IMG_SIZE, N_TRAIN;;
+	unsigned int N_CLASS = layers[n_layers - 1];
 
 	double *train_labels = read_mnist_labels(TRAIN_LABEL_PATH, N_TRAIN);
 	double **train_images = read_mnist_images(TRAIN_IMAGE_PATH, N_TRAIN, IMG_SIZE);
-
-	unsigned int N_CLASS = layers[n_layers - 1];
 
 	for (unsigned int e = 0; e < N_EP; e++) {
 		double total_error = 0; 
 		clock_t begin = clock();
 
 		for (unsigned int i = 0; i < N_TRAIN; i++) {
-			double **fires = nn.forward(train_images[i]);
+			double *real = nn.forward(train_images[i]);
 
 			double *target = onehot(train_labels[i], N_CLASS);
-			nn.backward(target, fires);
+			nn.backward(target);
 
-			total_error += cross_entropy_loss(fires[n_layers-1], train_labels[i], N_CLASS);
+			total_error += cross_entropy_loss(real, train_labels[i], N_CLASS);
 		}
-		clock_t end = clock();
-		double secs = double(end - begin) / CLOCKS_PER_SEC;;
+		double secs = double(clock() - begin) / CLOCKS_PER_SEC;
 		
 		printf("%i(%3.0fs): %f\n", e, secs, total_error);
 	}
 	
-	//// Evaluate
-	int N_TEST = 10000;
-
-	string TEST_LABEL_PATH = "C:\\MNIST\\t10k-labels.idx1-ubyte";
-	string TEST_IMAGE_PATH = "C:\\MNIST\\t10k-images.idx3-ubyte";
+	// Evaluate
+	int N_TEST;
 
 	double *test_labels = read_mnist_labels(TEST_LABEL_PATH, N_TEST);
 	double **test_images = read_mnist_images(TEST_IMAGE_PATH, N_TEST, IMG_SIZE);
 
-	int n_right = 0; int real; double **fires;
+	int n_correct = 0, real;
 	for (unsigned int i = 0; i < N_TEST; i++) {
-		fires = nn.forward(test_images[i]);
-
-		real = amax(fires[n_layers - 1], N_CLASS);
+		real = amax(nn.forward(test_images[i]), N_CLASS);
 
 		if (real == test_labels[i])
-			n_right += 1;
+			n_correct += 1;
 	}
-	printf("Correct: %f", ((float)n_right) / ((float)N_TEST));
+	printf("Correct: %f", n_correct / ((float) N_TEST));
 
-	//// Cleanup
+	// Cleanup
 	cudaDeviceReset();
 
     return 0;
