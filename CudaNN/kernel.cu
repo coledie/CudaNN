@@ -20,11 +20,9 @@ typedef unsigned char uchar;
 
 /*
 TODO
-- Backprop fully gpu based
-- matmul and invmatmul into matmul_m, matmul_n .. what order?
+- Finish backprop
 - NN Object - keep w, fires always on gpu
 - C++ & CUDA memory leaks
-- Documentation
 */
 
 __global__ void mul(double *output, const double *in1, const double *in2) {
@@ -89,7 +87,7 @@ __global__ void dsigmoid(double *output, const double *input){
 	output[i] = 1.0 - pow(input[i], 2);
 }
 
-__global__ void matmul(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
+__global__ void matmul_n(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
 	/*
 	Matrix multiplication
 
@@ -113,13 +111,13 @@ __global__ void matmul(double *output, const double *x, const double *mat, const
 	}
 }
 
-__global__ void invmatmul(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
+__global__ void matmul_m(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
 	/*
 	Matrix multiplication
 
 	Parameters
 	----------
-	x: double[n]
+	x: double[m]
 	mat: double[m, n]
 	maty: int = m
 	matx: int = n
@@ -277,7 +275,7 @@ double **forward(double *x, double **w, const unsigned int *layers, const unsign
 	
 	//
 	for (unsigned int i = 0; i < n_layers - 1; i++) {
-		matmul<<<1, layers[i + 1] >>>(gpu_fires[i+1], gpu_fires[i], gpu_w[i], layers[i], layers[i+1]);		
+		matmul_n<<<1, layers[i + 1] >>>(gpu_fires[i+1], gpu_fires[i], gpu_w[i], layers[i], layers[i+1]);		
 		cudaDeviceSynchronize();
 
 		sigmoid<<<1, layers[i + 1] >>>(gpu_fires[i + 1], gpu_fires[i + 1]);
@@ -371,7 +369,7 @@ void backward(double **w, const double *target, double **fires, const unsigned i
 		cudaFree(gpu_activation_prime);
 		cudaMalloc((void**)&gpu_activation_prime, layers[k + 1] * sizeof(double));
 
-		invmatmul << <1, layers[k + 1] >> > (gpu_error, gpu_deltas[k+1], gpu_w[k + 1], layers[k + 1], layers[k + 2]);
+		matmul_m << <1, layers[k + 1] >> > (gpu_error, gpu_deltas[k+1], gpu_w[k + 1], layers[k + 1], layers[k + 2]);
 		cudaDeviceSynchronize();
 
 		dsigmoid << <1, layers[k + 1] >> > (gpu_activation_prime, gpu_fires[k + 1]);
