@@ -20,6 +20,18 @@ typedef unsigned char uchar;
 
 
 double** read_mnist_images(string full_path, int& number_of_images, int& image_size) {
+	/*
+	Read MNIST dataset images.
+
+	Parameters
+	----------
+	full_path: string
+		Path to MNIST dataset.
+
+	Effects
+	-------
+	Set number of images to number of images in dataset, image size to dataset image size.
+	*/
 	auto reverseInt = [](int i) {
 		unsigned char c1, c2, c3, c4;
 		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
@@ -67,6 +79,18 @@ double** read_mnist_images(string full_path, int& number_of_images, int& image_s
 }
 
 double* read_mnist_labels(string full_path, int& number_of_labels) {
+	/*
+	Read MNIST dataset images.
+
+	Parameters
+	----------
+	full_path: string
+		Path to MNIST dataset.
+
+	Effects
+	-------
+	Set number of labels to number of labels in dataset, image size to dataset image size.
+	*/
 	auto reverseInt = [](int i) {
 		unsigned char c1, c2, c3, c4;
 		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
@@ -119,11 +143,11 @@ int amax(const double *real, const unsigned int &n_values) {
 	int Index of maximum value.
 	*/
 	unsigned int max_idx = n_values;
-	double max = -9999;
+	double max_value = -9999;
 
 	for (unsigned int i = 0; i < n_values; i++) {
-		if (real[i] > max) {
-			max = real[i];
+		if (real[i] > max_value) {
+			max_value = real[i];
 			max_idx = i;
 		}
 	}
@@ -144,7 +168,7 @@ double* onehot(const double &target, const int &N_CLASS) {
 
 	Returns
 	-------
-	double* Onehot vector.
+	double* Onehot encoding of target.
 	*/
 	double *output = new double[N_CLASS];
 
@@ -160,7 +184,7 @@ double* onehot(const double &target, const int &N_CLASS) {
 
 __global__ void mul(double *output, const double *in1, const double *in2) {
 	/*
-	Matrix multiplication.
+	Vector elementwise multiplication.
 
 	Parameters
 	----------
@@ -182,7 +206,7 @@ __global__ void mul(double *output, const double *in1, const double *in2) {
 
 __global__ void matmul_n(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
 	/*
-	Matrix multiplication
+	Matrix multiplication.
 
 	Parameters
 	----------
@@ -217,7 +241,7 @@ __global__ void matmul_m(double *output, const double *x, const double *mat, con
 
 	Returns
 	-------
-	double[m] Output of matrix multiplication.
+	double[n] Output of matrix multiplication.
 	*/
 	int i = threadIdx.x;
 
@@ -243,7 +267,7 @@ double cross_entropy_loss(double *real, const double &target, const unsigned int
 
 	Returns
 	-------
-	Cross entropy loss.
+	double Cross entropy loss.
 	*/
 	double total = 0;
 
@@ -268,7 +292,7 @@ __global__ void dcross_entropy_loss(double *output, const double *real, const do
 
 	Returns
 	-------
-	Derivative of cross entropy loss.
+	double[n] Derivative of cross entropy loss.
 	*/
 	int i = threadIdx.x;
 
@@ -348,18 +372,12 @@ class NN {
 
 		Parameters
 		----------
-		x: double[n]
+		x: double[layers[0]]
 			Input vector.
-		w: double[m, n]
-			Weight matrix.
-		layers: uint*
-			Size of each layer in the network.
-		n_layers: uint
-			Number of layers
 
 		Returns
 		-------
-		double** Fires in each layer of the network.
+		double* Firing magnitude of output neurons.
 		*/
 		// Select GPU
 		cudaSetDevice(0);
@@ -402,22 +420,12 @@ class NN {
 
 	void backward(const double *target) {
 		/*
-		Cross entropy loss function.
+		Calculate and backward propogate error.
 
 		Parameters
 		----------
-		w: double[m, n]
-			Weight matrix.
-		target: double[n]
+		target: double[N_CLASS]
 			Expected label.
-		fires: double[n_layers, layers]
-			Output of each layer in the network.
-		layers: uint*
-			Number of neurons in each layer.
-		n_layers: uint
-			Number of layers.
-		learning_rate: double
-			Learning rate of the network.
 
 		Effects
 		-------
