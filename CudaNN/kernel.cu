@@ -4,10 +4,6 @@ Deep neural network accelerated with CUDA.
 C++ & CUDA
 */
 
-#define _CRTDBG_MAP_ALLOC
-#include <stdlib.h>
-#include <crtdbg.h>
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
@@ -20,8 +16,6 @@ C++ & CUDA
 
 
 using namespace std;
-
-typedef unsigned char uchar;
 
 
 double** read_mnist_images(string full_path, int& number_of_images, int& image_size);
@@ -39,11 +33,8 @@ __global__ void dcross_entropy_loss(double *output, const double *real, const do
 __global__ void sigmoid(double *output, const double *input);
 __global__ void dsigmoid(double *output, const double *input);
 
-__global__ void update_w(double *w, double *fires, double *deltas, const double learning_rate, const unsigned int maty, const unsigned int matx) {
-	for (unsigned int y = 0; y < maty; y++)
-		for (unsigned int x = 0; x < matx; x++)
-			w[y * matx + x] -= learning_rate * fires[y] * deltas[x];
-}
+__global__ void update_w(double *w, double *fires, double *deltas, const double learning_rate, const unsigned int matx);
+
 
 class NN {
   private:
@@ -196,7 +187,7 @@ class NN {
 
 		// Apply deltas
 		for (int i = 0; i < n_layers - 1; i++){
-			update_w << <1, 1 >> > (gpu_w[i], gpu_recent_fires[i], gpu_deltas[i], learning_rate, layers[i], layers[i+1]);
+			update_w << <1, layers[i] >> > (gpu_w[i], gpu_recent_fires[i], gpu_deltas[i], learning_rate, layers[i+1]);
 			cudaDeviceSynchronize();
 		}
 		
@@ -250,6 +241,8 @@ int main(){
 			nn.backward(target);
 
 			total_error += cross_entropy_loss(real, train_labels[i], N_CLASS);
+
+			delete[] real, target;
 		}
 		double secs = double(clock() - begin) / CLOCKS_PER_SEC;
 		
@@ -264,17 +257,28 @@ int main(){
 
 	int n_correct = 0, real;
 	for (unsigned int i = 0; i < N_TEST; i++) {
-		real = amax(nn.forward(test_images[i]), N_CLASS);
+		double *output_fires = nn.forward(test_images[i]);
+		real = amax(output_fires, N_CLASS);
 
 		if (real == test_labels[i])
 			n_correct += 1;
+
+		delete[] output_fires;
 	}
 	printf("Correct: %f", n_correct / ((float) N_TEST));
 
 	// Cleanup
-	cudaDeviceReset();
+	for (int i = 0; i < N_TRAIN; i++)
+		delete[] train_images[i];
+	for (int i = 0; i < N_TEST; i++)
+		delete[] test_images[i];
 
-	_CrtDumpMemoryLeaks();
+	delete[] train_images;
+	delete[] test_images;
+	delete[] train_labels;
+	delete[] test_labels;
+
+	cudaDeviceReset();
 
     return 0;
 }
@@ -315,9 +319,9 @@ double** read_mnist_images(string full_path, int& number_of_images, int& image_s
 
 		image_size = n_rows * n_cols;
 
-		uchar** _dataset = new uchar*[number_of_images];
+		unsigned char** _dataset = new unsigned char*[number_of_images];
 		for (int i = 0; i < number_of_images; i++) {
-			_dataset[i] = new uchar[image_size];
+			_dataset[i] = new unsigned char[image_size];
 			file.read((char *)_dataset[i], image_size);
 		}
 
@@ -330,7 +334,10 @@ double** read_mnist_images(string full_path, int& number_of_images, int& image_s
 			for (int j = 0; j < image_size; j++) {
 				train_images[i][j] = (double)(_dataset[i][j]) / 255.;
 			}
+			
+			delete[] _dataset[i];
 		}
+		delete[] _dataset;
 
 		return train_images;
 	}
@@ -357,9 +364,6 @@ double* read_mnist_labels(string full_path, int& number_of_labels) {
 		c1 = i & 255, c2 = (i >> 8) & 255, c3 = (i >> 16) & 255, c4 = (i >> 24) & 255;
 		return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
 	};
-
-	typedef unsigned char uchar;
-
 	ifstream file(full_path, ios::binary);
 
 	if (file.is_open()) {
@@ -371,7 +375,7 @@ double* read_mnist_labels(string full_path, int& number_of_labels) {
 
 		file.read((char *)&number_of_labels, sizeof(number_of_labels)), number_of_labels = reverseInt(number_of_labels);
 
-		uchar* _dataset = new uchar[number_of_labels];
+		unsigned char* _dataset = new unsigned char[number_of_labels];
 		for (int i = 0; i < number_of_labels; i++) {
 			file.read((char*)&_dataset[i], 1);
 		}
@@ -380,6 +384,8 @@ double* read_mnist_labels(string full_path, int& number_of_labels) {
 		double *train_labels = new double[number_of_labels];
 		for (int i = 0; i < number_of_labels; i++)
 			train_labels[i] = (double)_dataset[i];
+
+		delete[] _dataset;
 
 		return train_labels;
 	}
@@ -482,11 +488,13 @@ __global__ void matmul_n(double *output, const double *x, const double *mat, con
 	*/
 	int i = threadIdx.x;
 
-	output[i] = 0;
+	double total = 0;
 
 	for (unsigned int j = 0; j < maty; j++) {
-		output[i] += x[j] * mat[j * matx + i];
+		total += x[j] * mat[j * matx + i];
 	}
+
+	output[i] = total;
 }
 
 __global__ void matmul_m(double *output, const double *x, const double *mat, const unsigned int maty, const unsigned int matx) {
@@ -506,11 +514,13 @@ __global__ void matmul_m(double *output, const double *x, const double *mat, con
 	*/
 	int i = threadIdx.x;
 
-	output[i] = 0;
+	double total = 0;
 
 	for (unsigned int j = 0; j < matx; j++) {
-		output[i] += x[j] * mat[i * matx + j];
+		total += x[j] * mat[i * matx + j];
 	}
+
+	output[i] = total;
 }
 
 double cross_entropy_loss(double *real, const double &target, const unsigned int &n_outputs) {
@@ -598,4 +608,11 @@ __global__ void dsigmoid(double *output, const double *input) {
 	int i = threadIdx.x;
 
 	output[i] = 1.0 - pow(input[i], 2);
+}
+
+__global__ void update_w(double *w, double *fires, double *deltas, const double learning_rate, const unsigned int matx) {
+	int y = threadIdx.x;
+
+	for (unsigned int x = 0; x < matx; x++)
+		w[y * matx + x] -= learning_rate * fires[y] * deltas[x];
 }
