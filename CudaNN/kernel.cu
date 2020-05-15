@@ -84,10 +84,13 @@ class NN {
 
 	~NN() {
 		// Free GPU Buffers
+		for (int i = 0; i < n_layers - 1; i++)
+			cudaFree(gpu_w[i]);
+		delete[] gpu_w;
+		
 		for (int i = 0; i < n_layers; i++)
 			cudaFree(gpu_recent_fires[i]);
 		delete[] gpu_recent_fires;
-
 	}
 
 	double *forward(const double *x) {
@@ -219,7 +222,7 @@ int main(){
 
 	const double learning_rate = .0001;
 	const unsigned int n_layers = 3;
-	const unsigned int layers[] = { 784, 32, 10 };
+	const unsigned int layers[n_layers] = { 784, 32, 10 };
 
 	NN nn(learning_rate, n_layers, layers);
 
@@ -611,6 +614,25 @@ __global__ void dsigmoid(double *output, const double *input) {
 }
 
 __global__ void update_w(double *w, double *fires, double *deltas, const double learning_rate, const unsigned int matx) {
+	/*
+	Update weight matrix according to deltas and previous fires.
+
+	Parameters
+	----------
+	w: double*
+		Weight matrix to update.
+	fires: double*
+		Previous fires.
+	deltas: double*
+		Calculated error deltas.
+	learning_rate: double
+		Scale how fast weights change.
+	mat: uint = n
+
+	Effects
+	-------
+	Weight matrix is updated according to calculated deltas and previous fires.
+	*/
 	int y = threadIdx.x;
 
 	for (unsigned int x = 0; x < matx; x++)
