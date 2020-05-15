@@ -339,20 +339,26 @@ __global__ void dsigmoid(double *output, const double *input) {
 	output[i] = 1.0 - pow(input[i], 2);
 }
 
+__global__ void update_w(double *w, double *fires, double *deltas, const unsigned int *layers, const double learning_rate, const unsigned int maty, const unsigned int matx) {
+	for (unsigned int y = 0; y < maty; y++)
+		for (unsigned int x = 0; x < matx; x++)
+			w[y * matx + x] -= learning_rate * fires[y] * deltas[x];
+}
+
 class NN {
   private:
 	const double learning_rate;
 	const unsigned int n_layers;
     const unsigned int *layers;
 
-	double **w;
+	double **gpu_w;
 	double **gpu_recent_fires;
 
   public:
 	NN(const double lr, const unsigned int n_l, const unsigned int *l)
 		: learning_rate(lr), n_layers(n_l), layers(l){
 		
-		w = new double*[n_layers - 1];
+		double **w= new double*[n_layers - 1];
 		
 		for (unsigned int i = 0; i < n_layers - 1; i++)
 		{
@@ -364,9 +370,21 @@ class NN {
 				}
 			}
 		}
+		
+		gpu_w = new double*[n_layers - 1];
+		for (int i = 0; i < n_layers - 1; i++) {
+			int size = layers[i] * layers[i + 1];
+
+			cudaMalloc((void**)&gpu_w[i], size * sizeof(double));
+			cudaMemcpy(gpu_w[i], w[i], size * sizeof(double), cudaMemcpyHostToDevice);
+
+			delete[] w[i];
+		}
+		delete[] w;
+
 	}
 
-	double *forward(double *x) {
+	double *forward(const double *x) {
 		/*
 		Forward propogate input through network.
 
@@ -383,14 +401,6 @@ class NN {
 		cudaSetDevice(0);
 
 		// Allocate GPU Buffers
-		double **gpu_w = new double*[n_layers - 1];
-		for (int i = 0; i < n_layers - 1; i++) {
-			int size = layers[i] * layers[i + 1];
-
-			cudaMalloc((void**)&gpu_w[i], size * sizeof(double));
-			cudaMemcpy(gpu_w[i], w[i], size * sizeof(double), cudaMemcpyHostToDevice);
-		}
-
 		double **gpu_fires = new double*[n_layers];
 		for (int i = 0; i < n_layers; i++)
 			cudaMalloc((void**)&gpu_fires[i], layers[i] * sizeof(double));
@@ -408,10 +418,6 @@ class NN {
 		//
 		double *output = new double[layers[n_layers - 1]];
 		cudaMemcpy(output, gpu_fires[n_layers-1], layers[n_layers-1] * sizeof(double), cudaMemcpyDeviceToHost);
-
-		for (int i = 0; i < n_layers - 1; i++)
-			cudaFree(gpu_w[i]);
-		delete[] gpu_w;
 
 		gpu_recent_fires = gpu_fires;
 
@@ -435,14 +441,6 @@ class NN {
 		cudaSetDevice(0);
 
 		// Allocate GPU Buffers
-		double **gpu_w = new double*[n_layers - 1];
-		for (int i = 0; i < n_layers - 1; i++) {
-			int size = layers[i] * layers[i + 1];
-
-			cudaMalloc((void**)&gpu_w[i], size * sizeof(double));
-			cudaMemcpy(gpu_w[i], w[i], size * sizeof(double), cudaMemcpyHostToDevice);
-		}
-
 		double *gpu_target = 0;
 		cudaMalloc((void**)&gpu_target, layers[n_layers - 1] * sizeof(double));
 		cudaMemcpy(gpu_target, target, layers[n_layers - 1] * sizeof(double), cudaMemcpyHostToDevice);
@@ -482,45 +480,35 @@ class NN {
 			mul << <1, layers[k + 1] >> > (gpu_deltas[k], gpu_activation_prime, gpu_error);
 			cudaDeviceSynchronize();
 		}
-		double **deltas = new double*[n_layers - 1];
-		for (int i = 0; i < n_layers - 1; i++) {
-			deltas[i] = new double[layers[i + 1]];
-			cudaMemcpy(deltas[i], gpu_deltas[i], layers[i + 1] * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaFree(gpu_deltas[i]);
-		}
-		delete[] gpu_deltas;
 
-		//
-		double **fires = new double*[n_layers];
-		for (int i = 0; i < n_layers; i++) {
-			fires[i] = new double[layers[i]];
-			cudaMemcpy(fires[i], gpu_recent_fires[i], layers[i] * sizeof(double), cudaMemcpyDeviceToHost);
-		}
+		unsigned int *gpu_layers = 0;
+		cudaMalloc((void**)&gpu_layers, n_layers * sizeof(unsigned int));
+		cudaMemcpy(gpu_layers, layers, n_layers * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
 		// Apply deltas
-		for (int i = 0; i < n_layers - 1; i++)
-			for (unsigned int y = 0; y < layers[i]; y++)
-				for (unsigned int x = 0; x < layers[i + 1]; x++)
-					w[i][y * layers[i + 1] + x] -= learning_rate * fires[i][y] * deltas[i][x];
+		for (int i = 0; i < n_layers - 1; i++){
+			update_w << <1, 1 >> > (gpu_w[i], gpu_recent_fires[i], gpu_deltas[i], gpu_layers, learning_rate, layers[i], layers[i+1]);
+			cudaDeviceSynchronize();
+		}
+		cudaFree(gpu_layers);
 
-		//
-		for (int i = 0; i < n_layers - 1; i++)
-			cudaFree(gpu_w[i]);
-		delete[] gpu_w;
+		cudaError_t cudaStatus = cudaGetLastError();
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "w launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		}
 
 		for (int i = 0; i < n_layers - 1; i++) {
-			delete[] deltas[i];
+			cudaFree(gpu_deltas[i]);
 			cudaFree(gpu_recent_fires[i]);
 		}
 		delete[] gpu_recent_fires;
-		delete[] deltas;
+		delete[] gpu_deltas;
 
 		cudaFree(gpu_target);
 		cudaFree(gpu_activation_prime);
 		cudaFree(gpu_error);
 	}
 };
-
 
 int main(){
 	string TRAIN_LABEL_PATH = "C:\\MNIST\\train-labels.idx1-ubyte";
