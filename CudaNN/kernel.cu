@@ -218,7 +218,7 @@ int main(){
 	string TEST_LABEL_PATH = "C:\\MNIST\\t10k-labels.idx1-ubyte";
 	string TEST_IMAGE_PATH = "C:\\MNIST\\t10k-images.idx3-ubyte";
 
-	unsigned int N_EP = 1;
+	unsigned int N_EP = 5;
 
 	const double learning_rate = .0001;
 	const unsigned int n_layers = 3;
