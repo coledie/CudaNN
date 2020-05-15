@@ -58,7 +58,8 @@ class NN {
 	NN(const double lr, const unsigned int n_l, const unsigned int *l)
 		: learning_rate(lr), n_layers(n_l), layers(l){
 		
-		double **w= new double*[n_layers - 1];
+		// Setup W
+		double **w = new double*[n_layers - 1];
 		
 		for (unsigned int i = 0; i < n_layers - 1; i++)
 		{
@@ -71,6 +72,7 @@ class NN {
 			}
 		}
 		
+		// Copy W to GPU
 		gpu_w = new double*[n_layers - 1];
 		for (int i = 0; i < n_layers - 1; i++) {
 			int size = layers[i] * layers[i + 1];
@@ -82,10 +84,19 @@ class NN {
 		}
 		delete[] w;
 
+		// Initialize GPU Buffers
+		gpu_recent_fires = new double*[n_layers];
+		for (int i = 0; i < n_layers; i++)
+			cudaMalloc((void**)&gpu_recent_fires[i], layers[i] * sizeof(double));
+
 	}
 
 	~NN() {
-		
+		// Free GPU Buffers
+		for (int i = 0; i < n_layers; i++)
+			cudaFree(gpu_recent_fires[i]);
+		delete[] gpu_recent_fires;
+
 	}
 
 	double *forward(const double *x) {
@@ -101,29 +112,24 @@ class NN {
 		-------
 		double* Firing magnitude of output neurons.
 		*/
-		// Select GPU
+		//
 		cudaSetDevice(0);
 
-		// Allocate GPU Buffers
-		double **gpu_fires = new double*[n_layers];
-		for (int i = 0; i < n_layers; i++)
-			cudaMalloc((void**)&gpu_fires[i], layers[i] * sizeof(double));
-		cudaMemcpy(gpu_fires[0], x, layers[0] * sizeof(double), cudaMemcpyHostToDevice);
+		//
+		cudaMemcpy(gpu_recent_fires[0], x, layers[0] * sizeof(double), cudaMemcpyHostToDevice);
 
 		//
 		for (unsigned int i = 0; i < n_layers - 1; i++) {
-			matmul_n << <1, layers[i + 1] >> > (gpu_fires[i + 1], gpu_fires[i], gpu_w[i], layers[i], layers[i + 1]);
+			matmul_n << <1, layers[i + 1] >> > (gpu_recent_fires[i + 1], gpu_recent_fires[i], gpu_w[i], layers[i], layers[i + 1]);
 			cudaDeviceSynchronize();
 
-			sigmoid << <1, layers[i + 1] >> > (gpu_fires[i + 1], gpu_fires[i + 1]);
+			sigmoid << <1, layers[i + 1] >> > (gpu_recent_fires[i + 1], gpu_recent_fires[i + 1]);
 			cudaDeviceSynchronize();
 		}
 
 		//
 		double *output = new double[layers[n_layers - 1]];
-		cudaMemcpy(output, gpu_fires[n_layers-1], layers[n_layers-1] * sizeof(double), cudaMemcpyDeviceToHost);
-
-		gpu_recent_fires = gpu_fires;
+		cudaMemcpy(output, gpu_recent_fires[n_layers-1], layers[n_layers-1] * sizeof(double), cudaMemcpyDeviceToHost);
 
 		return output;
 	}
@@ -149,10 +155,11 @@ class NN {
 		cudaMalloc((void**)&gpu_target, layers[n_layers - 1] * sizeof(double));
 		cudaMemcpy(gpu_target, target, layers[n_layers - 1] * sizeof(double), cudaMemcpyHostToDevice);
 
-		double *gpu_error = 0;
-		cudaMalloc((void**)&gpu_error, layers[n_layers - 1] * sizeof(double));
 		double *gpu_activation_prime = 0;
 		cudaMalloc((void**)&gpu_activation_prime, layers[n_layers - 1] * sizeof(double));
+
+		double *gpu_error = 0;
+		cudaMalloc((void**)&gpu_error, layers[n_layers - 1] * sizeof(double));
 
 		double **gpu_deltas = new double*[n_layers - 1];
 		for (int i = 0; i < n_layers - 1; i++)
@@ -170,11 +177,13 @@ class NN {
 
 		//// Backpropogate
 		for (int k = n_layers - 3; k > -1; k--) {
+			//
 			cudaFree(gpu_error);
 			cudaMalloc((void**)&gpu_error, layers[k + 1] * sizeof(double));
 			cudaFree(gpu_activation_prime);
 			cudaMalloc((void**)&gpu_activation_prime, layers[k + 1] * sizeof(double));
 
+			//
 			matmul_m << <1, layers[k + 1] >> > (gpu_error, gpu_deltas[k + 1], gpu_w[k + 1], layers[k + 1], layers[k + 2]);
 			cudaDeviceSynchronize();
 
@@ -196,16 +205,15 @@ class NN {
 			fprintf(stderr, "w launch failed: %s\n", cudaGetErrorString(cudaStatus));
 		}
 
-		for (int i = 0; i < n_layers - 1; i++) {
-			cudaFree(gpu_deltas[i]);
-			cudaFree(gpu_recent_fires[i]);
-		}
-		delete[] gpu_recent_fires;
-		delete[] gpu_deltas;
-
+		// Cleanup
 		cudaFree(gpu_target);
 		cudaFree(gpu_activation_prime);
 		cudaFree(gpu_error);
+
+		for (int i = 0; i < n_layers - 1; i++) {
+			cudaFree(gpu_deltas[i]);
+		}
+		delete[] gpu_deltas;
 	}
 };
 
